@@ -100,6 +100,21 @@ An iPhone app for learning Mandarin Chinese.
 - Tested: all 444 non-tone items accept their pinyin/numbered/hanzi and every English sense;
   only one false positive between chapter-mates (送 accepts "to give"). Flow tested incl. overrule.
 
+Merged into main 2026-10-18.
+
+## Change 2: stricter progress (branch `feature/stricter-progress`)
+- User asked: a word is "learned" only after being WRITTEN right 3 times in a row; a chapter is
+  complete only after 2 passes. User chose: passes = mistake-free ✍️ Flashcards runs only (either
+  direction). Tones section (no written mode) uses the 🎵 Tone quiz for both rules.
+- Per word (`S.srs[id]`): `ws` = consecutive first-try correct written answers (one per run/review),
+  `L` = timestamp when learned (sticky). Per chapter: `passes`, `done` at 2, stars per direction.
+- Saved state has `v: 2`; `upgrade()` clears v1 chapter completions and learned flags (they came
+  from self-graded cards) but keeps the review schedule, streak days and settings. Backups go
+  through `upgrade()` too.
+- Stages: New / Practising / Learned / Mastered (learned + review box ≥ 5).
+- Tested: upgrade from a v1 save; MC perfect = practice only; pass 1 → pass 2 = complete; a miss
+  resets that word's count; learned after 3 written runs; tone quiz passes in Tones.
+
 ## Content plan (verbs + adjectives, in case they need redoing)
 - verbs.js (id verbs, 动词 dòng cí, 🏃, English "to …"): essentials 是 有 在 去 来 要 想 会 能 可以 ·
   daily-life 吃 喝 睡觉 起床 洗澡 穿 做饭 上班 回家 休息 · moving 走 跑 坐 站 进 出 到 回 开车 骑 ·
