@@ -6,14 +6,13 @@
   const APP_VERSION = '1.0.0';
   const SECTION_ORDER = ['nouns', 'verbs', 'adjectives', 'proverbs', 'sentences', 'counting', 'tones'];
   const MODES = {
-    flash: { icon: '🃏', name: 'Flashcards', desc: 'Flip the card, then grade yourself', dirs: true },
+    flash: { icon: '✍️', name: 'Flashcards', desc: 'Write the answer: pinyin, 汉字 or English', dirs: true },
     choice: { icon: '✅', name: 'Multiple choice', desc: 'Pick the right answer out of four', dirs: true },
     listen: { icon: '👂', name: 'Listening', desc: 'Hear it, pick the meaning', dir: 'zh2en' },
-    type: { icon: '⌨️', name: 'Type the pinyin', desc: 'See the English, type how it sounds', dir: 'en2zh' },
     build: { icon: '🧩', name: 'Build it', desc: 'Tap the pieces in the right order', dir: 'en2zh' },
     tone: { icon: '🎵', name: 'Tone quiz', desc: 'Hear it, pick the tone', dir: 'tone' },
   };
-  const WORD_MODES = ['flash', 'choice', 'listen', 'type'];
+  const WORD_MODES = ['flash', 'choice', 'listen'];
   const SECTION_MODES = {
     nouns: WORD_MODES, verbs: WORD_MODES, adjectives: WORD_MODES, counting: WORD_MODES,
     proverbs: ['flash', 'choice', 'listen', 'build'],
@@ -436,10 +435,11 @@
     nextCard();
   }
   function reviewMode(it) {
-    let m = SECTION_MODES[it.sid].filter((x) => x !== 'flash');
+    let m = SECTION_MODES[it.sid];
     if (!Speech.ok) m = m.filter((x) => x !== 'listen' && x !== 'tone');
     if (!m.length) m = ['choice'];
-    return pick(m.flatMap((x) => (x === 'choice' ? [x, x, x] : [x])));
+    const weight = { choice: 3, flash: 2 };
+    return pick(m.flatMap((x) => Array(weight[x] || 1).fill(x)));
   }
   function nextCard() {
     clearTimeout(RUN.timer);
@@ -487,9 +487,11 @@
     return idx;
   }
 
-  function answer(ok) {
+  // Records the answer. `settled` = the feedback is already on screen (a wrong written answer the
+  // learner then confirmed or overruled), so move straight on.
+  function answer(ok, settled) {
     const c = RUN && RUN.cur;
-    if (!c || (c.state !== 'ask' && c.state !== 'flipped')) return;
+    if (!c || (c.state !== 'ask' && c.state !== 'checked')) return;
     const it = c.it;
     c.state = ok ? 'right' : 'wrong';
     RUN.queue.shift();
@@ -498,11 +500,11 @@
     if (ok) RUN.done.add(it.id);
     else { RUN.mistakes++; RUN.missed.add(it.id); RUN.queue.splice(Math.min(RUN.queue.length, 3), 0, it); }
     save();
-    if (c.mode === 'flash') return nextCard();
+    if (settled) return nextCard();
     renderRun();
     if (S.settings.autoplay && c.dir === 'en2zh') Speech.say(it.hz);
     if (ok) {
-      const wait = it.sid === 'sentences' || c.mode === 'type' || c.mode === 'build' ? 1800 : 1200;
+      const wait = it.sid === 'sentences' || c.mode === 'flash' || c.mode === 'build' ? 1800 : 1200;
       RUN.timer = setTimeout(() => { if (RUN && RUN.cur === c) nextCard(); }, wait);
     }
   }
@@ -545,14 +547,95 @@
     const hit = seqs.some((sq) => sq.length === inTones.length && sq.every((t, i) => t === inTones[i]));
     return hit ? { ok: true, msg: '' } : { ok: false, msg: 'right sounds, wrong tones' };
   }
-  function checkType(giveUp) {
+  // ----- English answers: forgiving about typos, articles, "to", contractions and alternative meanings -----
+  const CONTRACTIONS = [
+    [/\bi'm\b/g, 'i am'], [/\b(you|we|they)'re\b/g, '$1 are'], [/\b(it|that|what|where|who|how|there|he|she)'s\b/g, '$1 is'],
+    [/\bcan'?t\b|\bcannot\b/g, 'can not'], [/\bwon't\b/g, 'will not'], [/\b(\w+)n't\b/g, '$1 not'], [/\blet's\b/g, 'let us'],
+    [/\b(i|you|we|they|he|she|it)'ll\b/g, '$1 will'], [/\b(i|you|we|they)'ve\b/g, '$1 have'], [/\b(i|you|we|they|he|she)'d\b/g, '$1 would'],
+  ];
+  const STOP = new Set(['a', 'an', 'the', 'to', 'of', 'and', 'or', 'is', 'are', 'am', 'be', 'was', 'were', 'do', 'does', 'did', 'it', 'that', 'this', 'in', 'on', 'at', 'for', 'with', 'very', 'so', 'please', 'really']);
+  function normEn(s) {
+    let t = s.toLowerCase().replace(/[’‘]/g, "'").replace(/(\d),(\d)/g, '$1$2').replace(/colour/g, 'color').replace(/grey/g, 'gray');
+    for (const [re, rep] of CONTRACTIONS) t = t.replace(re, rep);
+    t = t.replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return t.replace(/^(to|a|an|the|one) (?=\S)/, '');
+  }
+  function lev(a, b) {
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i];
+      for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+  function closeEnough(a, b) {
+    if (a === b) return true;
+    if (/\d/.test(a + b)) return false; // numbers must be exact
+    if (a === `${b}s` || b === `${a}s`) return true; // "eats" for "eat", "cats" for "cat"
+    const n = Math.max(a.length, b.length);
+    return lev(a, b) <= (n <= 4 ? 0 : n <= 8 ? 1 : Math.floor(n * 0.15));
+  }
+  function enCandidates(it) {
+    const words = it.sid !== 'sentences' && it.sid !== 'proverbs';
+    const out = new Set([it.e, it.lit, it.eq].filter(Boolean));
+    for (const sense of it.e.split(/\s*;\s*/)) {
+      out.add(sense);
+      if (!words) continue;
+      sense.split(/\s*(?:\/|,(?!\d))\s*/).forEach((p) => out.add(p));
+      // "to come / go in" → "to come in", "to go in"
+      const m = sense.match(/^(.*?)(\S+) \/ (\S+)(.*)$/);
+      if (m) { out.add(m[1] + m[2] + m[4]); out.add(m[1] + m[3] + m[4]); }
+    }
+    for (const p of [...out]) {
+      out.add(p.replace(/\(.*?\)/g, ' '));
+      if (words) (p.match(/\(([^)]*)\)/g) || []).forEach((m) => out.add(m.slice(1, -1)));
+    }
+    return [...out].map(normEn).filter(Boolean);
+  }
+  function gradeEnglish(input, it) {
+    const inp = normEn(input);
+    if (!inp) return { ok: false, msg: 'not quite' };
+    const cands = enCandidates(it);
+    if (cands.some((c) => closeEnough(inp, c))) return { ok: true, msg: cands.includes(inp) ? '' : 'close enough' };
+    // Longer answers (sentences, sayings): enough of the meaningful words, without much extra.
+    const mine = inp.split(' ').filter((w) => !STOP.has(w));
+    for (const c of cands) {
+      const theirs = c.split(' ').filter((w) => !STOP.has(w));
+      if (theirs.length < 3) continue;
+      const used = new Set();
+      let hit = 0;
+      for (const w of theirs) {
+        const j = mine.findIndex((x, k) => !used.has(k) && closeEnough(x, w));
+        if (j >= 0) { used.add(j); hit++; }
+      }
+      if ((hit - 0.5 * (mine.length - used.size)) / theirs.length >= 0.75) return { ok: true, msg: 'close enough' };
+    }
+    return { ok: false, msg: 'not quite' };
+  }
+  const hanOnly = (s) => [...s].filter(isHan).join('');
+  function gradeWrite(input, it, dir) {
+    if (dir === 'zh2en') return gradeEnglish(input, it);
+    if ([...input].some(isHan)) {
+      const ok = hanOnly(input) === hanOnly(it.hz);
+      return { ok, msg: ok ? '' : 'different characters' };
+    }
+    return gradePinyin(input, it);
+  }
+  function checkWrite(giveUp) {
     const c = RUN && RUN.cur;
     if (!c || c.state !== 'ask') return;
     const typed = giveUp ? '' : ((document.getElementById('typed') || {}).value || '').trim();
     if (!giveUp && !typed) return;
-    const res = giveUp ? { ok: false, msg: '' } : gradePinyin(typed, c.it);
-    c.note = giveUp ? '' : `You typed <b>${esc(typed)}</b>${res.msg ? ` — ${res.msg}` : ''}`;
-    answer(res.ok);
+    if (giveUp) { c.note = ''; return answer(false); }
+    const res = gradeWrite(typed, c.it, c.dir);
+    c.typed = typed;
+    c.note = `You wrote <b>${esc(typed)}</b>${res.msg ? ` — ${res.msg}` : ''}`;
+    if (res.ok) return answer(true);
+    // Wrong: show the answer first, and let the learner overrule if theirs meant the same.
+    c.state = 'checked';
+    renderRun();
+    if (S.settings.autoplay && c.dir === 'en2zh') Speech.say(c.it.hz);
   }
 
   function finishRun() {
@@ -599,7 +682,8 @@
   }
   function feedback(c) {
     const ok = c.state === 'right';
-    return `<div class="fb ${ok ? 'good' : 'bad'}"><div class="fb-title">${ok ? pick(PRAISE) : '✗ Not quite — remember this one:'}</div>${c.note ? `<div class="fb-note">${c.note}</div>` : ''}${reveal(c.it)}</div>`;
+    const overrule = c.state === 'checked' ? '<div class="fb-note muted">Did yours mean the same thing? Then tap “I was right”.</div>' : '';
+    return `<div class="fb ${ok ? 'good' : 'bad'}"><div class="fb-title">${ok ? pick(PRAISE) : '✗ Not quite — remember this one:'}</div>${c.note ? `<div class="fb-note">${c.note}</div>` : ''}${overrule}${reveal(c.it)}</div>`;
   }
   const continueBtn = () => `<button class="btn primary wide" data-act="next">Continue</button>`;
   const tileHTML = (piece, attrs) => `<button class="tile" ${attrs}>${hz(piece.t, piece.p)}${S.settings.showPinyin ? `<small>${py(piece.p)}</small>` : ''}</button>`;
@@ -619,14 +703,19 @@
     const c = RUN.cur, it = c.it, asking = c.state === 'ask';
     let body = '', foot = '';
     if (c.mode === 'flash') {
-      const front = c.dir === 'en2zh' ? promptEn(it) : promptZh(it);
+      const toEn = c.dir === 'zh2en';
+      body = `<div class="card qcard">${toEn ? promptZh(it) : promptEn(it)}</div>`;
       if (asking) {
-        body = `<div class="card qcard tappable" data-act="flip">${front}<div class="tap-hint">Tap to show the answer</div></div>`;
-        foot = `<button class="btn primary wide" data-act="flip">Show answer</button>`;
-      } else {
-        body = `<div class="card qcard">${front}</div>${reveal(it)}`;
-        foot = `<div class="row2"><button class="btn bad" data-act="grade" data-ok="0">✗ Didn't know</button><button class="btn good" data-act="grade" data-ok="1">✓ Knew it</button></div>`;
-      }
+        const attrs = toEn ? 'autocorrect="on" spellcheck="true" placeholder="The meaning in English"' : 'autocorrect="off" spellcheck="false" placeholder="Pinyin (ni3 hao3) or 汉字"';
+        body += `<form class="type-form" data-form="write"><input id="typed" autocomplete="off" autocapitalize="off" enterkeyhint="done" ${attrs}>
+          ${toEn ? '<p class="hint">Small typos are fine.</p>'
+            : `<div class="tone-keys">${[1, 2, 3, 4].map((n) => `<button type="button" class="tk t${n}" data-act="tk" data-n="${n}">${n}${contour(n)}</button>`).join('')}</div>
+          <p class="hint">Pinyin: put the tone number after each syllable (ü = v). For 汉字, switch to the Chinese keyboard with 🌐.</p>`}</form>`;
+        foot = `<div class="row2"><button class="btn" data-act="dunno">Show me</button><button class="btn primary" data-act="check-write">Check</button></div>`;
+      } else if (c.state === 'checked') {
+        body += feedback(c);
+        foot = `<div class="row2"><button class="btn" data-act="overrule">✓ I was right</button><button class="btn primary" data-act="confirm-wrong">Continue</button></div>`;
+      } else { body += feedback(c); foot = continueBtn(); }
     } else if (c.mode === 'choice' || c.mode === 'listen' || c.mode === 'tone') {
       const showEn = c.mode === 'listen' || c.dir === 'zh2en';
       const q = c.mode === 'tone' ? listenPrompt(it, !asking, 'Which tone do you hear?')
@@ -645,14 +734,6 @@
       const layout = c.mode === 'tone' ? 'tones' : showEn ? 'en' : long ? 'zh long' : 'zh';
       body = `<div class="card qcard">${q}</div><div class="opts ${layout}">${opts}</div>${asking ? '' : feedback(c)}`;
       foot = asking ? '' : continueBtn();
-    } else if (c.mode === 'type') {
-      body = `<div class="card qcard">${promptEn(it)}</div>`;
-      if (asking) {
-        body += `<form class="type-form" data-form="type"><input id="typed" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" placeholder="Pinyin, e.g. ni3 hao3">
-          <div class="tone-keys">${[1, 2, 3, 4].map((n) => `<button type="button" class="tk t${n}" data-act="tk" data-n="${n}">${n}${contour(n)}</button>`).join('')}</div>
-          <p class="hint">Type tones as numbers after each syllable. ü = v.</p></form>`;
-        foot = `<div class="row2"><button class="btn" data-act="dunno">Show me</button><button class="btn primary" data-act="check-type">Check</button></div>`;
-      } else { body += feedback(c); foot = continueBtn(); }
     } else if (c.mode === 'build') {
       body = `<div class="card qcard">${promptEn(it)}</div>
         <div class="build-ans ${asking ? '' : c.state}">${c.built.map((j, k) => tileHTML(c.pieces[j], `data-act="untile" data-i="${k}"`)).join('') || '<span class="ph">Tap the pieces in order…</span>'}</div>
@@ -668,7 +749,7 @@
       <div class="run-label">${runLabel(c)}</div>
       <div class="run-body">${body}</div>
       <div class="run-foot">${foot}</div></div>`, false);
-    if (c.mode === 'type' && asking) { const inp = document.getElementById('typed'); if (inp) inp.focus(); }
+    if (c.mode === 'flash' && asking) { const inp = document.getElementById('typed'); if (inp) inp.focus(); }
   }
   function renderResult() {
     const R = RUN, missed = [...R.missed].map((id) => ITEMS[id]).filter(Boolean);
@@ -891,21 +972,16 @@
     review: () => startRun('review', dueList().slice(0, REVIEW_SIZE)),
     weak: () => startRun('weak', weakList()),
     quit: quitRun,
-    flip: () => {
-      const c = RUN && RUN.cur;
-      if (!c || c.state !== 'ask') return;
-      c.state = 'flipped'; renderRun();
-      if (c.dir === 'en2zh' && S.settings.autoplay) Speech.say(c.it.hz);
-    },
-    grade: (el) => answer(el.dataset.ok === '1'),
+    overrule: () => answer(true, true),
+    'confirm-wrong': () => answer(false, true),
     pick: (el) => pickOpt(+el.dataset.i),
     next: () => { if (RUN && !RUN.finished) nextCard(); },
     tile: (el) => tileTap(+el.dataset.i),
     untile: (el) => untile(+el.dataset.i),
     'build-reset': () => { const c = RUN.cur; c.pool = c.pool.concat(c.built); c.built = []; renderRun(); },
     tk: (el) => { const i = document.getElementById('typed'); if (i) { i.value += el.dataset.n; i.focus(); } },
-    'check-type': () => checkType(false),
-    dunno: () => checkType(true),
+    'check-write': () => checkWrite(false),
+    dunno: () => checkWrite(true),
     wsec: (el) => { WORDS.sec = el.dataset.id; renderWords(); },
     export: exportProgress,
     reset: () => {
@@ -933,7 +1009,7 @@
   });
   document.addEventListener('submit', (e) => {
     e.preventDefault();
-    if (e.target.dataset.form === 'type') checkType(false);
+    if (e.target.dataset.form === 'write') checkWrite(false);
     if (e.target.dataset.form === 'drill') ACTIONS['drill-check']();
   });
   document.addEventListener('change', (e) => {
@@ -965,5 +1041,5 @@
   }
 
   // Exposed for debugging and tests only.
-  window.XZW = { numZh, numPy, gradePinyin, align, state: () => S, run: () => RUN, ITEMS, PICTO, pictoHTML };
+  window.XZW = { numZh, numPy, gradePinyin, gradeWrite, align, state: () => S, run: () => RUN, ITEMS, PICTO, pictoHTML };
 })();
