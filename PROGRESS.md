@@ -1,0 +1,99 @@
+# Learning Chinese App — progress / handoff notes
+
+Read this first if you are a new model/session picking up the work.
+Update it after every meaningful step.
+
+## Goal (from the user, 2026-10-18)
+An iPhone app for learning Mandarin Chinese.
+- Home screen with sections:
+  1. **Nouns** — flashcards
+  2. **Verbs** — flashcards
+  3. **Adjectives** — flashcards
+  4. **Proverbs** — famous sayings / chengyu
+  5. **Everyday sentences** — full sentences
+  6. **Counting** — numbers and measure words (量词)
+- Every card teaches **hanzi + pinyin + English**.
+- Two directions: **English → hanzi+pinyin** and **hanzi+pinyin → English**.
+- **Images / visual aids** to help memorise the hanzi.
+- Each section is divided into **chapters**. A chapter is **complete** when a full run
+  through its words is done **without mistakes**.
+- Must be easy ("seamless") to get onto the user's iPhone.
+- User wants progress saved throughout so work can continue with a different model.
+
+## Environment facts
+- Mac has only Command Line Tools — **Xcode is NOT installed** (no `xcodebuild`).
+- No `node`, no `gh`. `python3` (Homebrew 3.13) and `git` exist.
+- => Native SwiftUI app would need a ~15 GB Xcode install + Apple ID signing
+  (free Apple ID: app must be reinstalled every 7 days).
+- => Recommended route: installable **web app (PWA)** — open in Safari → Share →
+  Add to Home Screen. Works offline, no expiry.
+
+## Decisions (answered by user 2026-10-18)
+- Platform: **home-screen web app (PWA)**, plain HTML/CSS/JS, no build step.
+- Extra features: **Audio + tone colors** (TTS via speechSynthesis zh-CN, tone-colored
+  pinyin AND hanzi, a "Tones" section with a listen-and-pick-the-tone quiz),
+  **Spaced repetition** (daily review queue, streak, daily goal),
+  **More quiz types** (multiple choice, listening, type pinyin, sentence/idiom tile builder).
+  NOT chosen: stroke order / handwriting.
+- Level: **Beginner, HSK 1–2**.
+- Visual aids: emoji per word + memory hook (component breakdown + mnemonic)
+  + small SVG pictographs for picture characters (人 山 木 日 月 口 …), drawn in app.js.
+- Chapter completion rule: a run asks every item once (missed items re-queue at the end);
+  the run is "perfect" only with 0 mistakes. First perfect run => chapter complete ✓.
+  Bonus stars: one per direction perfected (EN→中, 中→EN).
+- [pending] Hosting: GitHub Pages (best: real offline PWA; user needs a GitHub account)
+  vs claude.ai artifact link. Ask the user once the app works.
+
+## Layout
+- `app/` — everything that gets deployed (index.html, css/, js/, js/data/, sw.js, manifest, icons/)
+- `app/js/data/<section>.js` — content, format in `DATA_FORMAT.md`
+- `tools/validate.py` — checks every data file (hanzi/pinyin alignment, fields, readings)
+- Local preview: `python3 -m http.server 8765 --directory app` (see .claude/launch.json)
+
+## Status
+- [x] Requirements captured
+- [x] Decisions answered by user
+- [x] Data format + validator (`DATA_FORMAT.md`, `tools/validate.py`)
+- [x] Content done + validated: nouns (130), sentences (64), proverbs (29), counting (81), tones (44)
+- [x] Content: verbs (80) + adjectives (60). Total 488 items, 51 chapters, all validate.
+- [x] App built: `app/index.html`, `app/css/style.css`, `app/js/app.js` (home, sections,
+      chapters, runs in 6 modes, review/SRS, weak words, words search, settings, backup,
+      number drill, 22 SVG pictographs).
+- [x] Icons (`sh tools/make_icons.sh`, uses qlmanage+sips — Swift toolchain on this Mac is broken),
+      manifest, `sw.js` (run `python3 tools/stamp.py` after ANY app change to bump the cache).
+      SW is skipped on localhost unless `?sw=1`.
+- [x] Scripted test in browser (375×812): every chapter × every mode played to a perfect run;
+      mistakes block completion; stars per direction; review session (20 at a time) works;
+      gradePinyin accepts marked/numbered/toneless pinyin for all 488 items; numZh/numPy checked.
+- [x] Visual pass of all screens in dark + light at 375×812; offline cache verified (16 files).
+- [ ] **NEXT: hosting — user chose GitHub Pages (2026-10-18).**
+      Done: `gh` installed via Homebrew; README.md + .gitignore written; signed in with
+      `gh auth login --web` as GitHub user **niklaseckert-lang** (id 264371162).
+      (The terminal-panel sign-in didn't work for the user; running it in the background
+      and giving them the device code + https://github.com/login/device did.)
+      Repo: github.com/niklaseckert-lang/learn-chinese → app at
+      https://niklaseckert-lang.github.io/learn-chinese/
+      Steps: `git init -b main`; set LOCAL git user.name = GitHub login and user.email =
+      `<id>+<login>@users.noreply.github.com` (from `gh api user`) so their email stays private;
+      commit; `gh repo create learn-chinese --public --source . --push`;
+      `git subtree push --prefix app origin gh-pages`;
+      enable Pages: `gh api -X POST repos/<login>/learn-chinese/pages -f 'source[branch]=gh-pages' -f 'source[path]=/'`;
+      URL will be `https://<login>.github.io/learn-chinese/`. Then give the user iPhone install steps.
+      After any later change: validate → stamp → commit → push → subtree push.
+- [ ] Hosted + installed on iPhone
+
+## Content plan (verbs + adjectives, in case they need redoing)
+- verbs.js (id verbs, 动词 dòng cí, 🏃, English "to …"): essentials 是 有 在 去 来 要 想 会 能 可以 ·
+  daily-life 吃 喝 睡觉 起床 洗澡 穿 做饭 上班 回家 休息 · moving 走 跑 坐 站 进 出 到 回 开车 骑 ·
+  talking 说 听 看 读 写 问 回答 叫 告诉 打电话 · thinking 喜欢 爱 觉得 知道 认识 懂 希望 忘记 记得 相信 ·
+  doing 买 卖 给 做 用 找 等 帮助 送 拿 · study-work 学习 工作 教 开始 结束 准备 练习 复习 上课 下课 ·
+  free-time 玩 唱歌 跳舞 游泳 旅游 运动 踢足球 打篮球 笑 哭
+- adjectives.js (id adjectives, 形容词 xíng róng cí, 🎨): basics 大 小 多 少 好 坏 新 旧 长 短 ·
+  feelings 高兴 快乐 累 饿 渴 忙 生气 难过 舒服 紧张 · people 高 矮 胖 瘦 漂亮 帅 聪明 年轻 老 可爱 ·
+  colors 红色 黄色 蓝色 绿色 白色 黑色 紫色 灰色 粉色 橙色 · qualities 贵 便宜 快 慢 远 近 难 容易 热 冷 ·
+  more 好吃 好看 干净 安静 有意思 重要 方便 简单 对 错
+
+## Notes from content helpers
+- tones: 飞机→西瓜 and 大学→面条 (avoid repeating characters inside the section).
+- sentences: mid-sentence comma written as "我 很 好， 谢谢。" so 谢谢 is its own tile.
+- 多少 written duō shao; 马马虎虎 mǎ ma hū hū; capitals on country/language pinyin.
