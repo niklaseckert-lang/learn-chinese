@@ -238,7 +238,6 @@ a.card:active, button.card:active, .word:active, .mode:active, .opt:active, .til
 .run-foot .btn.wide { margin-top: 0; }
 
 .qcard { text-align: center; padding: 24px 16px; min-height: 190px; display: flex; flex-direction: column; justify-content: center; margin: 0; }
-.qcard.tappable { cursor: pointer; }
 .q-img { font-size: 60px; line-height: 1.15; margin-bottom: 6px; }
 .q-en { font-size: 25px; font-weight: 700; line-height: 1.25; }
 .q-hz { line-height: 1.2; font-weight: 500; }
@@ -250,7 +249,6 @@ a.card:active, button.card:active, .word:active, .mode:active, .opt:active, .til
 .q-hint { color: var(--muted); font-size: 16px; }
 .q-hint .hz { font-size: 30px; color: var(--ink); }
 .q-num { font-size: 52px; font-weight: 700; letter-spacing: 1px; font-variant-numeric: tabular-nums; }
-.tap-hint { margin-top: 16px; font-size: 13px; color: var(--muted); }
 
 .opts { display: grid; gap: 10px; }
 .opts.zh, .opts.tones { grid-template-columns: 1fr 1fr; }

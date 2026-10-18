@@ -66,7 +66,7 @@ An iPhone app for learning Mandarin Chinese.
       mistakes block completion; stars per direction; review session (20 at a time) works;
       gradePinyin accepts marked/numbered/toneless pinyin for all 488 items; numZh/numPy checked.
 - [x] Visual pass of all screens in dark + light at 375×812; offline cache verified (16 files).
-- [ ] **NEXT: hosting — user chose GitHub Pages (2026-10-18).**
+- [x] **Hosting — GitHub Pages (2026-10-18), live. See "Live" below.**
       Done: `gh` installed via Homebrew; README.md + .gitignore written; signed in with
       `gh auth login --web` as GitHub user **niklaseckert-lang** (id 264371162).
       (The terminal-panel sign-in didn't work for the user; running it in the background
@@ -81,6 +81,24 @@ An iPhone app for learning Mandarin Chinese.
       URL will be `https://<login>.github.io/learn-chinese/`. Then give the user iPhone install steps.
       After any later change: validate → stamp → commit → push → subtree push.
 - [ ] Hosted + installed on iPhone
+
+## Live (2026-10-18)
+- Published: https://niklaseckert-lang.github.io/learn-chinese/ (repo niklaseckert-lang/learn-chinese,
+  `main` = full project, `gh-pages` = `app/` via `git subtree push --prefix app origin gh-pages`).
+- If the iPhone shows a "critical security threat" page, the site itself is fine (valid cert, not on
+  Google Safe Browsing). It's a filter on the phone or network; the user got past it.
+
+## Change 1: typed flashcards (branch `feature/typed-flashcards`)
+- User asked: flashcards should make you WRITE the answer and auto-grade it (no "Knew it / Didn't know").
+- Flashcards (`flash` mode) now take typed input. EN→中: pinyin (marked or tone numbers, toneless
+  accepted unless strict) or 汉字. 中→EN: English, graded by `gradeEnglish` (typos via Levenshtein,
+  articles/"to", contractions, each `;` sense, `/` alternatives, parentheses, plural -s; numbers exact;
+  sentences/sayings by content-word overlap ≥ 75%). Wrong answers wait in state `checked` with
+  "I was right" (counts right) / "Continue" (counts wrong).
+- The separate "Type the pinyin" mode was removed (flashcards EN→中 cover it). Review now mixes in
+  written flashcards (weights: choice 3, flash 2, others 1).
+- Tested: all 444 non-tone items accept their pinyin/numbered/hanzi and every English sense;
+  only one false positive between chapter-mates (送 accepts "to give"). Flow tested incl. overrule.
 
 ## Content plan (verbs + adjectives, in case they need redoing)
 - verbs.js (id verbs, 动词 dòng cí, 🏃, English "to …"): essentials 是 有 在 去 来 要 想 会 能 可以 ·
