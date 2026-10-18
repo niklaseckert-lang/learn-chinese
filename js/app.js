@@ -47,11 +47,27 @@
   // ---------- saved state ----------
   const STORE_KEY = 'xuezhongwen.v1';
   const DEFAULT_SETTINGS = { toneColors: true, showPinyin: true, autoplay: true, rate: 0.8, strictTones: false, dailyGoal: 20, theme: 'auto', dirs: {}, hideInstall: false };
-  const freshState = () => ({ srs: {}, chapters: {}, days: {}, last: null, drillBest: 0, settings: { ...DEFAULT_SETTINGS } });
+  const STATE_VERSION = 2;
+  const LEARN_STREAK = 3; // written right this many runs/reviews in a row = learned
+  const PASSES_NEEDED = 2; // mistake-free written runs to complete a chapter
+  const freshState = () => ({ v: STATE_VERSION, srs: {}, chapters: {}, days: {}, last: null, drillBest: 0, settings: { ...DEFAULT_SETTINGS } });
+  // Brings saved progress (from storage or a backup file) up to the current rules.
+  function upgrade(saved) {
+    const from = saved.v || 1;
+    const s = { ...freshState(), ...saved, settings: { ...DEFAULT_SETTINGS, ...(saved.settings || {}) } };
+    if (from < 2) {
+      // v2: "learned" needs written answers and chapters need written passes, so self-graded
+      // progress from v1 no longer counts. The review schedule is kept.
+      for (const r of Object.values(s.srs)) { delete r.ws; delete r.L; }
+      s.chapters = {};
+    }
+    s.v = STATE_VERSION;
+    return s;
+  }
   function loadState() {
     try {
       const raw = localStorage.getItem(STORE_KEY);
-      if (raw) { const s = JSON.parse(raw); return { ...freshState(), ...s, settings: { ...DEFAULT_SETTINGS, ...(s.settings || {}) } }; }
+      if (raw) return upgrade(JSON.parse(raw));
     } catch (e) { /* storage blocked or corrupt: start fresh */ }
     return freshState();
   }
@@ -202,9 +218,19 @@
     return Object.keys(S.srs).filter((id) => ITEMS[id] && S.srs[id].b > 0 && S.srs[id].due <= now)
       .sort((a, b) => S.srs[a].due - S.srs[b].due).map((id) => ITEMS[id]);
   };
-  const learnedIn = (items) => items.filter((it) => S.srs[it.id] && S.srs[it.id].b > 0).length;
-  const stage = (r) => (!r || !r.b ? 0 : r.b <= 2 ? 1 : r.b <= 4 ? 2 : 3);
-  const STAGE_NAME = ['New', 'Learning', 'Familiar', 'Mastered'];
+  // A word is learned once written right LEARN_STREAK times in a row (first try of each run or
+  // review; tones: heard right in the tone quiz). It stays learned; reviews keep it fresh.
+  function streakAnswer(it, ok) {
+    const r = S.srs[it.id];
+    r.ws = ok ? (r.ws || 0) + 1 : 0;
+    if (r.ws >= LEARN_STREAK && !r.L) { r.L = Date.now(); return true; }
+    return false;
+  }
+  const isLearned = (r) => !!(r && r.L);
+  const learnedIn = (items) => items.filter((it) => isLearned(S.srs[it.id])).length;
+  const stage = (r) => (!r ? 0 : !r.L ? 1 : r.b < 5 ? 2 : 3);
+  const STAGE_NAME = ['New', 'Practising', 'Learned', 'Mastered'];
+  const countsAsPass = (mode, sid) => mode === 'flash' || (sid === 'tones' && mode === 'tone');
   function weakList() {
     return Object.keys(S.srs).filter((id) => ITEMS[id] && S.srs[id].w > 0 && S.srs[id].w / (S.srs[id].w + S.srs[id].r) >= 0.25)
       .sort((a, b) => (S.srs[b].w / (S.srs[b].w + S.srs[b].r)) - (S.srs[a].w / (S.srs[a].w + S.srs[a].r)) || S.srs[b].w - S.srs[a].w)
@@ -263,7 +289,8 @@
   // ---------- home ----------
   function renderHome() {
     const due = dueList().length, goal = S.settings.dailyGoal, today = S.days[dayKey()] || 0;
-    const learned = Object.values(S.srs).filter((r) => r.b > 0).length;
+    const learned = Object.values(S.srs).filter(isLearned).length;
+    const practised = Object.values(S.srs).filter((r) => r.b > 0).length;
     render(`
       <section class="hero">
         <div class="seal" lang="zh-Hans">学</div>
@@ -276,7 +303,7 @@
         <div><b>${today}<small>/${goal}</small></b><span>today</span><i class="meter"><i style="width:${Math.min(100, pct(today, goal))}%"></i></i></div>
         <div><b>${learned}</b><span>learned</span></div>
       </section>
-      ${reviewCta(due, learned)}
+      ${reviewCta(due, practised)}
       ${continueCard()}
       <h2 class="h2">Sections</h2>
       ${SECTIONS.map(sectionCard).join('')}
@@ -287,8 +314,8 @@
     if (!ios || navigator.standalone || S.settings.hideInstall) return '';
     return `<div class="card install"><span class="big-ico">📲</span><div><b>Install the app</b><br>Tap <b>Share</b> <span class="share">⬆︎</span> below, then <b>Add to Home Screen</b>.</div><button class="icon-btn" data-act="hide-install" aria-label="Hide">✕</button></div>`;
   }
-  function reviewCta(due, learned) {
-    if (!learned) return `<div class="card tip">👋 <b>Start here:</b> pick a section, open chapter 1 and do a run. Each word you answer joins your daily review. New to tones? Try the <a href="#/s/tones">Tones</a> section first.</div>`;
+  function reviewCta(due, practised) {
+    if (!practised) return `<div class="card tip">👋 <b>Start here:</b> pick a section, open chapter 1 and do a run. Each word you answer joins your daily review. A word counts as <b>learned</b> once you've written it right ${LEARN_STREAK} times in a row, and a chapter is <b>complete</b> after ${PASSES_NEEDED} mistake-free ✍️ Flashcard runs. New to tones? Try the <a href="#/s/tones">Tones</a> section first.</div>`;
     if (due) return `<button class="card cta" data-act="review"><span class="cta-ico" lang="zh-Hans">复</span><span class="grow"><b>Review ${plural(due, 'word')}</b><small>Keep them in long-term memory</small></span><span class="chev">›</span></button>`;
     const next = Object.values(S.srs).filter((r) => r.b > 0).reduce((m, r) => Math.min(m, r.due), Infinity);
     return `<div class="card calm">✓ <b>All reviews done.</b> <small>Next review ${relDay(next)}.</small></div>`;
@@ -325,14 +352,16 @@
       ${s.chapters.map((ch, i) => {
         const st = chState(ch);
         const stars = sid === 'tones' ? '' : `<span class="stars" title="English→中文 / 中文→English">${star(st.en2zh)}${star(st.zh2en)}</span>`;
-        return `<a class="card chap ${st.done ? 'done' : ''}" href="#/c/${sid}/${ch.id}">
+        const passes = st.done ? '✓ complete' : `${st.passes || 0}/${PASSES_NEEDED} passes`;
+        return `<a class="card chap ${st.done ? 'done' : st.passes ? 'half' : ''}" href="#/c/${sid}/${ch.id}">
           <span class="chap-num">${st.done ? '✓' : i + 1}</span>
           <span class="grow"><b>${esc(ch.title)}</b> <span class="chap-zh" lang="zh-Hans">${esc(ch.zh)}</span>
-          <small>${ch.items.length} ${unit} · ${learnedIn(ch.items)} learned</small></span>
+          <small>${learnedIn(ch.items)}/${ch.items.length} ${unit} learned · ${passes}</small></span>
           ${stars}<span class="chev">›</span></a>`;
       }).join('')}`);
   }
   const star = (on) => `<span class="star ${on ? 'on' : ''}">★</span>`;
+  const passDots = (n) => Array.from({ length: PASSES_NEEDED }, (_, i) => `<span class="pdot ${i < n ? 'on' : ''}"></span>`).join('');
   function drillCard() {
     return `<a class="card cta" href="#/drill"><span class="big-ico">🎲</span><span class="grow"><b>Number drill</b><small>Endless random numbers: read them, hear them, say them</small></span><span class="chev">›</span></a>`;
   }
@@ -352,9 +381,11 @@
     if (!ch) return go('#/');
     const st = chState(ch), modes = SECTION_MODES[sid], dir = S.settings.dirs[sid] || 'en2zh';
     const next = s.chapters[ch.index + 1];
+    const passMode = sid === 'tones' ? '🎵 Tone quiz' : '✍️ Flashcards';
     const status = st.done
       ? `<div class="banner good">✓ <b>Chapter complete</b>${sid !== 'tones' ? `<span class="dirstars">${star(st.en2zh)} English→中文 &nbsp; ${star(st.zh2en)} 中文→English</span>` : ''}</div>`
-      : `<div class="banner">Finish one run with <b>no mistakes</b> to complete this chapter.${st.runs ? ` Best so far: ${plural(st.best, 'mistake')}.` : ''}</div>`;
+      : `<div class="banner"><div class="pass-row"><b>Passes</b> ${passDots(st.passes || 0)} <span>${st.passes || 0} of ${PASSES_NEEDED}</span></div>
+          A pass is a <b>${passMode}</b> run with <b>no mistakes</b>. ${PASSES_NEEDED} passes complete the chapter.${st.runs ? ` Best so far: ${plural(st.best, 'mistake')}.` : ''}</div>`;
     render(`${header(esc(ch.title), `#/s/${sid}`)}
       <div class="chap-head"><span lang="zh-Hans">${esc(ch.zh)}</span> · ${esc(s.title)} · chapter ${ch.index + 1} of ${s.chapters.length}</div>
       ${status}
@@ -370,8 +401,9 @@
     const M = MODES[m];
     const tag = M.dir === 'zh2en' ? '中→EN' : M.dir === 'en2zh' ? 'EN→中' : '';
     const noAudio = (m === 'listen' || m === 'tone') && !Speech.ok;
-    return `<button class="mode" data-act="start" data-sid="${sid}" data-cid="${cid}" data-mode="${m}" ${noAudio ? 'disabled' : ''}>
-      <span class="mode-icon">${M.icon}</span><span class="grow"><b>${M.name}</b><small>${noAudio ? 'Needs audio, which this browser lacks' : M.desc}</small></span>${tag ? `<span class="tag">${tag}</span>` : ''}</button>`;
+    const pass = countsAsPass(m, sid);
+    return `<button class="mode ${pass ? 'passing' : ''}" data-act="start" data-sid="${sid}" data-cid="${cid}" data-mode="${m}" ${noAudio ? 'disabled' : ''}>
+      <span class="mode-icon">${M.icon}</span><span class="grow"><b>${M.name}</b><small>${noAudio ? 'Needs audio, which this browser lacks' : M.desc}</small></span>${pass ? '<span class="tag pass">counts as pass</span>' : tag ? `<span class="tag">${tag}</span>` : ''}</button>`;
   }
   function wordRow(it) {
     return `<button class="word" data-act="detail" data-id="${esc(it.id)}">
@@ -392,8 +424,9 @@
   function openSheet(it) {
     if (!it) return;
     const r = S.srs[it.id];
-    const status = !r ? 'New — not practised yet.'
-      : `${STAGE_NAME[stage(r)]} · answered ${r.r + r.w}× (${r.r} right)${r.b ? ` · next review ${relDay(r.due)}` : ''}`;
+    const verb = it.sid === 'tones' ? 'heard' : 'written';
+    const status = !r ? `New — ${verb} right 0/${LEARN_STREAK} in a row.`
+      : `${STAGE_NAME[stage(r)]} · ${r.L ? `learned ✓` : `${verb} right ${r.ws || 0}/${LEARN_STREAK} in a row`}${r.b ? ` · next review ${relDay(r.due)}` : ''}`;
     const pics = picsFor(it);
     const sheet = document.getElementById('sheet');
     sheet.innerHTML = `<div class="sheet-wrap" data-act="close-sheet"><div class="sheet" data-act="noop" role="dialog" aria-modal="true">
@@ -496,7 +529,16 @@
     c.state = ok ? 'right' : 'wrong';
     RUN.queue.shift();
     countAnswer();
-    if (!RUN.first.has(it.id)) { RUN.first.set(it.id, ok); srsAnswer(it, ok); }
+    if (!RUN.first.has(it.id)) {
+      RUN.first.set(it.id, ok);
+      srsAnswer(it, ok);
+      // Only the first try per run counts toward "learned", and only in written (or tone) cards.
+      if (countsAsPass(c.mode, it.sid)) {
+        c.justLearned = streakAnswer(it, ok);
+        c.streak = S.srs[it.id].ws;
+        if (c.justLearned) RUN.learned = (RUN.learned || 0) + 1;
+      }
+    }
     if (ok) RUN.done.add(it.id);
     else { RUN.mistakes++; RUN.missed.add(it.id); RUN.queue.splice(Math.min(RUN.queue.length, 3), 0, it); }
     save();
@@ -643,14 +685,18 @@
     RUN.perfect = RUN.mistakes === 0;
     if (RUN.kind === 'chapter') {
       const key = `${RUN.sid}/${RUN.cid}`;
-      const st = (S.chapters[key] = S.chapters[key] || { done: false, en2zh: false, zh2en: false, runs: 0, best: null });
+      const st = (S.chapters[key] = S.chapters[key] || { done: false, passes: 0, en2zh: false, zh2en: false, runs: 0, best: null });
       RUN.wasDone = st.done;
-      st.runs++;
-      st.best = st.best == null ? RUN.mistakes : Math.min(st.best, RUN.mistakes);
-      if (RUN.perfect) {
-        st.done = true;
-        const d = MODES[RUN.mode].dir || RUN.dir;
-        if (d === 'en2zh' || d === 'zh2en') { RUN.newStar = !st[d]; st[d] = true; }
+      RUN.counts = countsAsPass(RUN.mode, RUN.sid);
+      if (RUN.counts) {
+        st.runs++;
+        st.best = st.best == null ? RUN.mistakes : Math.min(st.best, RUN.mistakes);
+        if (RUN.perfect) {
+          st.passes = (st.passes || 0) + 1;
+          RUN.passNo = st.passes;
+          if (RUN.dir === 'en2zh' || RUN.dir === 'zh2en') { RUN.newStar = !st[RUN.dir]; st[RUN.dir] = true; }
+          if (st.passes >= PASSES_NEEDED) st.done = true;
+        }
       }
     }
     save();
@@ -683,7 +729,10 @@
   function feedback(c) {
     const ok = c.state === 'right';
     const overrule = c.state === 'checked' ? '<div class="fb-note muted">Did yours mean the same thing? Then tap “I was right”.</div>' : '';
-    return `<div class="fb ${ok ? 'good' : 'bad'}"><div class="fb-title">${ok ? pick(PRAISE) : '✗ Not quite — remember this one:'}</div>${c.note ? `<div class="fb-note">${c.note}</div>` : ''}${overrule}${reveal(c.it)}</div>`;
+    const r = S.srs[c.it.id];
+    const streak = c.justLearned ? `<div class="fb-streak learned">🎓 Learned! Right ${LEARN_STREAK} times in a row.</div>`
+      : c.streak != null && !(r && r.L) ? `<div class="fb-streak">${'●'.repeat(Math.min(c.streak, LEARN_STREAK))}${'○'.repeat(LEARN_STREAK - Math.min(c.streak, LEARN_STREAK))} ${c.streak}/${LEARN_STREAK} in a row toward learned</div>` : '';
+    return `<div class="fb ${ok ? 'good' : 'bad'}"><div class="fb-title">${ok ? pick(PRAISE) : '✗ Not quite — remember this one:'}</div>${c.note ? `<div class="fb-note">${c.note}</div>` : ''}${streak}${overrule}${reveal(c.it)}</div>`;
   }
   const continueBtn = () => `<button class="btn primary wide" data-act="next">Continue</button>`;
   const tileHTML = (piece, attrs) => `<button class="tile" ${attrs}>${hz(piece.t, piece.p)}${S.settings.showPinyin ? `<small>${py(piece.p)}</small>` : ''}</button>`;
@@ -754,22 +803,36 @@
   function renderResult() {
     const R = RUN, missed = [...R.missed].map((id) => ITEMS[id]).filter(Boolean);
     let emoji, title, sub, buttons;
+    const learnedLine = R.learned ? ` 🎓 ${plural(R.learned, 'word')} newly learned.` : '';
     if (R.kind === 'chapter') {
-      const s = SEC[R.sid], ch = chapterOf(R.sid, R.cid), next = s.chapters[ch.index + 1];
-      if (R.perfect) {
-        emoji = '🎉'; title = R.wasDone ? 'Perfect again!' : 'Chapter complete!';
-        sub = `${esc(ch.title)} — every answer right.${R.newStar ? ' You earned a new ★.' : ''}`;
-        buttons = `${next ? `<a class="btn primary wide" href="#/c/${R.sid}/${next.id}">Next chapter: ${esc(next.title)} ›</a>` : ''}
-          <div class="row2"><button class="btn" data-act="retry">Run again</button><a class="btn" href="#/c/${R.sid}/${R.cid}">Back to chapter</a></div>`;
+      const s = SEC[R.sid], ch = chapterOf(R.sid, R.cid), next = s.chapters[ch.index + 1], st = chState(ch);
+      const back = (cls = '') => `<a class="btn ${cls}" href="#/c/${R.sid}/${R.cid}">Back to chapter</a>`;
+      const passMode = R.sid === 'tones' ? 'tone' : 'flash';
+      if (R.perfect && R.counts) {
+        if (st.done && !R.wasDone) { emoji = '🎉'; title = 'Chapter complete!'; sub = `${esc(ch.title)} — passed ${PASSES_NEEDED} times with no mistakes.`; }
+        else if (R.wasDone) { emoji = '🌟'; title = 'Perfect again!'; sub = `${esc(ch.title)} — every answer right.`; }
+        else {
+          const left = PASSES_NEEDED - R.passNo;
+          emoji = '✅'; title = `Pass ${R.passNo} of ${PASSES_NEEDED}!`;
+          sub = `No mistakes. ${left} more perfect run${left === 1 ? '' : 's'} to complete the chapter.`;
+        }
+        sub += `${R.newStar ? ' You earned a new ★.' : ''}${learnedLine}`;
+        buttons = st.done
+          ? `${next ? `<a class="btn primary wide" href="#/c/${R.sid}/${next.id}">Next chapter: ${esc(next.title)} ›</a>` : ''}<div class="row2"><button class="btn" data-act="retry">Run again</button>${back()}</div>`
+          : `<button class="btn primary wide" data-act="retry">Go for pass ${R.passNo + 1}</button>${back('wide')}`;
+      } else if (R.perfect) {
+        emoji = '👍'; title = 'Perfect practice!';
+        sub = `Every answer right. Passes come from <b>${MODES[passMode].icon} ${MODES[passMode].name}</b> runs — try one next.`;
+        buttons = `<button class="btn primary wide" data-act="start" data-sid="${R.sid}" data-cid="${R.cid}" data-mode="${passMode}">${MODES[passMode].icon} Start a ${MODES[passMode].name} run</button>${back('wide')}`;
       } else {
         emoji = '💪'; title = `${plural(R.mistakes, 'mistake')} this time`;
-        sub = 'Do a run with no mistakes to complete the chapter. Have another look at these:';
-        buttons = `<button class="btn primary wide" data-act="retry">Try again</button><a class="btn wide" href="#/c/${R.sid}/${R.cid}">Back to chapter</a>`;
+        sub = `${R.counts ? 'A pass needs a run with no mistakes.' : ''}${learnedLine} Have another look at these:`;
+        buttons = `<button class="btn primary wide" data-act="retry">Try again</button>${back('wide')}`;
       }
     } else {
       const firstOk = [...R.first.values()].filter(Boolean).length, due = dueList().length;
       emoji = R.perfect ? '🌟' : '✅'; title = R.kind === 'weak' ? 'Practice done' : 'Review done';
-      sub = `${firstOk}/${R.total} right on the first try.`;
+      sub = `${firstOk}/${R.total} right on the first try.${learnedLine}`;
       buttons = `${due ? `<button class="btn primary wide" data-act="review">Keep reviewing (${due} due)</button>` : ''}<a class="btn wide" href="#/">Done</a>`;
     }
     const confetti = R.perfect ? `<div class="confetti">${Array.from({ length: 36 }, () => `<i style="left:${Math.random() * 100}%;animation-delay:${(Math.random() * 0.9).toFixed(2)}s;background:hsl(${Math.floor(Math.random() * 360)} 85% 60%)"></i>`).join('')}</div>` : '';
@@ -797,7 +860,8 @@
         <div class="stack">${[1, 2, 3].map((s) => `<i class="s${s}" style="flex:${counts[s] || 0}"></i>`).join('')}</div>
         <div class="legend">${[1, 2, 3].map((s) => `<span><i class="dot s${s}"></i>${STAGE_NAME[s]} ${counts[s]}</span>`).join('')}</div>
         <p class="muted">Coming up: ${soon(1) - due.length} tomorrow · ${soon(7) - due.length} in the next 7 days</p></div>` : ''}
-      <div class="card"><h3>How review works</h3><p class="muted">Every word you answer goes into a box. Each time you get it right on its review day, it moves up a box and waits longer: 1 → 2 → 4 → 8 → 16 → 32 days and beyond. Miss it and it comes back tomorrow. A few minutes a day keeps everything fresh.</p></div>`);
+      <div class="card"><h3>How progress works</h3><p class="muted"><b>Learned:</b> a word counts as learned once you've <b>written</b> it right ${LEARN_STREAK} times in a row in ✍️ Flashcards, counting your first try in each run or review. A wrong answer starts the count over. <b>Mastered:</b> learned, and remembered across reviews for 16+ days.</p>
+        <p class="muted"><b>Reviews:</b> every word you answer goes into a box. Each time you get it right on its review day, it moves up a box and waits longer: 1 → 2 → 4 → 8 → 16 → 32 days and beyond. Miss it and it comes back tomorrow.</p></div>`);
   }
 
   // ---------- words tab ----------
@@ -873,7 +937,7 @@
         const obj = JSON.parse(reader.result), st = obj.state || obj;
         if (!st || typeof st.srs !== 'object') throw new Error('not a backup');
         if (!confirm('Replace your current progress with this backup?')) return;
-        S = { ...freshState(), ...st, settings: { ...DEFAULT_SETTINGS, ...(st.settings || {}) } };
+        S = upgrade(st);
         save(); applySettings(); toast('✓ Backup restored'); route();
       } catch (e) { toast('That file is not a 学中文 backup'); }
     };
