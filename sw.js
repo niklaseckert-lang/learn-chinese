@@ -1,6 +1,6 @@
 /* Offline support: cache every app file, serve from cache, refresh when VERSION changes.
    VERSION and ASSETS are rewritten by tools/stamp.py — run it after changing any app file. */
-const VERSION = 'bace5c6865';
+const VERSION = 'd692c5516a';
 const ASSETS = [
   './',
   'index.html',
