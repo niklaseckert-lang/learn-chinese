@@ -138,6 +138,14 @@ Merged into main 2026-10-19.
 - `APP_VERSION` is now real (1.4) and shown on Home + Settings. **Bump it on every release.**
 - Settings → "Check for updates": `reg.update()`, then reloads on `controllerchange`.
 
+Merged into main 2026-10-19 (first push failed during a Mac kernel panic; retry worked).
+
+## Change 5: even slower 🐢 — v1.5 (branch `feature/even-slower`, 2026-10-19)
+- Setting renamed "🐢 How slow": Slow / Slower / Slowest (keys still short/medium/long, so saved
+  choices carry over). Pauses now 600 / 1100 / 1600 ms; default Slower.
+- Slowest also splits sentences syllable by syllable (`slowChunks(text, p, bySyllable)`), still
+  keeping neutral tones and 一/不 attached.
+
 ## Content plan (verbs + adjectives, in case they need redoing)
 - verbs.js (id verbs, 动词 dòng cí, 🏃, English "to …"): essentials 是 有 在 去 来 要 想 会 能 可以 ·
   daily-life 吃 喝 睡觉 起床 洗澡 穿 做饭 上班 回家 休息 · moving 走 跑 坐 站 进 出 到 回 开车 骑 ·

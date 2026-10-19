@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.4';
+  const APP_VERSION = '1.5';
   const SECTION_ORDER = ['nouns', 'verbs', 'adjectives', 'proverbs', 'sentences', 'counting', 'tones'];
   const MODES = {
     flash: { icon: '✍️', name: 'Flashcards', desc: 'Write the answer: pinyin, 汉字 or English', dirs: true },
@@ -154,7 +154,7 @@
     // `p` (pinyin) lets it split safely. Recent iOS ignores `rate`, so the pauses do the slowing.
     say(text, slow, p) {
       if (!this.ok) { toast('Audio is not available in this browser'); return; }
-      const parts = slow ? slowChunks(String(text), p) : [String(text).replace(/\s+/g, '')];
+      const parts = slow ? slowChunks(String(text), p, S.settings.slowGap === 'long') : [String(text).replace(/\s+/g, '')];
       const rate = slow ? Math.max(0.35, S.settings.rate * 0.6) : S.settings.rate;
       const gap = SLOW_GAPS[S.settings.slowGap] || SLOW_GAPS.medium;
       const token = (this.seq = (this.seq || 0) + 1);
@@ -187,14 +187,16 @@
       const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u);
     },
   };
-  const SLOW_GAPS = { short: 350, medium: 700, long: 1200 }; // ms of silence between slow pieces
-  // Pieces for slow speech: word by word when the text has word spaces (sentences), otherwise
-  // syllable by syllable. Neutral-tone syllables stay with the syllable before them and 一/不 with
-  // the one after, because said on their own they would get the wrong tone.
-  function slowChunks(text, p) {
+  // ms of silence between slow pieces, by the Settings choice Slow / Slower / Slowest
+  const SLOW_GAPS = { short: 600, medium: 1100, long: 1600 };
+  // Pieces for slow speech: word by word when the text has word spaces (sentences), otherwise —
+  // or when `bySyllable` (Slowest) — syllable by syllable. Neutral-tone syllables stay with the
+  // syllable before them and 一/不 with the one after, because said on their own they would get
+  // the wrong tone.
+  function slowChunks(text, p, bySyllable) {
     const t = text.trim();
     const words = t.split(/\s+/).map((w) => [...w].filter(isHan)).filter((w) => w.length);
-    const wordMode = words.length > 1;
+    const wordMode = words.length > 1 && !(bySyllable && p);
     let chunks;
     if (!p) chunks = wordMode ? words.map((w) => w.join('')) : [t];
     else {
@@ -934,8 +936,8 @@
         <div class="legend tones-legend">${[1, 2, 3, 4, 5].map((t) => `<span class="t${t}">${contour(t)} ${TONE_ORD[t]}</span>`).join('')}</div>
         ${toggle('showPinyin', 'Show pinyin in questions', 'Turn off to practise reading hanzi on their own')}
         ${toggle('autoplay', 'Play audio automatically', 'Speak the Chinese when a card is shown or answered')}
-        <label class="set-row"><span class="grow"><b>🐢 Slow mode pauses</b><small>Slow audio says one piece at a time; this is the pause between pieces</small></span>
-          <select data-set="slowGap">${[['short', 'Short'], ['medium', 'Medium'], ['long', 'Long']].map(([v, l]) => `<option value="${v}" ${st.slowGap === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="set-row"><span class="grow"><b>🐢 How slow</b><small>Slow audio says one piece at a time with a pause after each. Slowest also takes sentences one syllable at a time.</small></span>
+          <select data-set="slowGap">${[['short', 'Slow'], ['medium', 'Slower'], ['long', 'Slowest']].map(([v, l]) => `<option value="${v}" ${st.slowGap === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
         <div class="set-row"><span class="grow"><b>Try slow mode</b><small>${hz('我想喝一杯咖啡。', 'Wǒ xiǎng hē yì bēi kā fēi.')}</small></span>${slowBtn('我 想 喝 一杯 咖啡。', 'Wǒ xiǎng hē yì bēi kā fēi.', '🐢 Play')}</div>
         <label class="set-row"><span class="grow"><b>Speech speed</b><small><span id="rate-val">${st.rate.toFixed(2)}×</span> · recent iPhones may ignore this setting</small></span><input type="range" min="0.5" max="1.1" step="0.05" value="${st.rate}" data-set="rate"></label>
         <div class="set-row"><span class="grow"><b>Voice</b><small>${voice}</small></span><button class="btn small" data-act="say" data-t="你好，欢迎你学中文！">Test</button></div>
