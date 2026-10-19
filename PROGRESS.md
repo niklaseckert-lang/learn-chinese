@@ -115,6 +115,18 @@ Merged into main 2026-10-18.
 - Tested: upgrade from a v1 save; MC perfect = practice only; pass 1 → pass 2 = complete; a miss
   resets that word's count; learned after 3 written runs; tone quiz passes in Tones.
 
+Merged into main 2026-10-18.
+
+## Change 3: wait for Continue + working slow audio (branch `feature/continue-and-slow-audio`, 2026-10-19)
+- No more auto-advance after correct answers; every answer waits for Continue.
+- iOS 17.1+ appears to ignore the speech rate (Apple forum thread 741356 reports it for
+  AVSpeechSynthesizer, which Safari's speechSynthesis uses). So 🐢 now also splits the speech with
+  "，" pauses via `slowText(text, pinyin)`. Sentences go word by word (they have word spaces),
+  everything else syllable by syllable; neutral-tone syllables stay with the previous piece and
+  一/不 stay with the next. All slow buttons pass pinyin via `data-p`. Single syllables can't be split.
+- Not published as recorded audio files: macOS system voices may not be redistributed.
+- Local preview port moved to 8766 (8765 is used by the Biophysics Course session's server).
+
 ## Content plan (verbs + adjectives, in case they need redoing)
 - verbs.js (id verbs, 动词 dòng cí, 🏃, English "to …"): essentials 是 有 在 去 来 要 想 会 能 可以 ·
   daily-life 吃 喝 睡觉 起床 洗澡 穿 做饭 上班 回家 休息 · moving 走 跑 坐 站 进 出 到 回 开车 骑 ·

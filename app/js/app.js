@@ -150,9 +150,10 @@
       choose();
       speechSynthesis.onvoiceschanged = choose;
     },
-    say(text, slow) {
+    // `p` (pinyin) lets slow speech split the text safely; without it slow only lowers the rate.
+    say(text, slow, p) {
       if (!this.ok) { toast('Audio is not available in this browser'); return; }
-      const u = new SpeechSynthesisUtterance(String(text).replace(/\s+/g, ''));
+      const u = new SpeechSynthesisUtterance(slow ? slowText(String(text), p) : String(text).replace(/\s+/g, ''));
       u.lang = 'zh-CN';
       if (this.voice) u.voice = this.voice;
       u.rate = slow ? Math.max(0.35, S.settings.rate * 0.6) : S.settings.rate;
@@ -168,8 +169,32 @@
       const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u);
     },
   };
+  // Recent iOS versions ignore the speaking rate, so slow speech also pauses between pieces:
+  // word by word when the text has word spaces (sentences), otherwise syllable by syllable.
+  // Neutral-tone syllables stay with the syllable before them and 一/不 with the one after,
+  // because said on their own they would get the wrong tone.
+  function slowText(text, p) {
+    const t = text.trim();
+    const end = /[？！?!]$/.test(t) ? t.slice(-1) : '。';
+    const words = t.split(/\s+/).map((w) => [...w].filter(isHan)).filter((w) => w.length);
+    const wordMode = words.length > 1;
+    if (!p) return wordMode ? words.map((w) => w.join('')).join('，') + end : t;
+    const tones = p.trim().split(/\s+/).map(toneOf);
+    const chunks = [];
+    let k = 0, prev = null;
+    for (const w of words) {
+      w.forEach((c, j) => {
+        const tone = tones[k++] || 5;
+        const boundary = wordMode ? j === 0 : true;
+        const attach = chunks.length && (!boundary || tone === 5 || prev === '一' || prev === '不');
+        if (attach) chunks[chunks.length - 1] += c; else chunks.push(c);
+        prev = c;
+      });
+    }
+    return chunks.join('，') + end;
+  }
   const sayBtn = (text, label = '🔊', cls = '') => `<button class="say ${cls}" data-act="say" data-t="${esc(text)}" aria-label="Play audio">${label}</button>`;
-  const slowBtn = (text, label = '🐢') => `<button class="say slow" data-act="say" data-slow="1" data-t="${esc(text)}" aria-label="Play slowly">${label}</button>`;
+  const slowBtn = (text, p, label = '🐢') => `<button class="say slow" data-act="say" data-slow="1" data-t="${esc(text)}" data-p="${esc(p || '')}" aria-label="Play slowly">${label}</button>`;
 
   // ---------- pictographs (picture → character) ----------
   const PICTO = {
@@ -260,7 +285,7 @@
   function go(hash) { if (location.hash === hash) route(); else location.hash = hash; }
   function route() {
     const h = location.hash || '#/';
-    if (h !== '#/run' && RUN) { clearTimeout(RUN.timer); RUN = null; }
+    if (h !== '#/run') RUN = null;
     closeSheet();
     let m;
     if ((m = h.match(/^#\/s\/([\w-]+)$/))) renderSection(m[1]);
@@ -435,7 +460,7 @@
         ${it.img ? `<div class="d-img">${it.img}</div>` : ''}
         <div class="d-hz">${hz(it.h, it.p)}</div>
         <div class="d-py">${py(it.p)}</div>
-        <div class="d-say">${sayBtn(it.hz, '🔊 Play')} ${slowBtn(it.hz, '🐢 Slow')}</div>
+        <div class="d-say">${sayBtn(it.hz, '🔊 Play')} ${slowBtn(it.h, it.p, '🐢 Slow')}</div>
         <div class="d-en">${esc(it.e)}</div>
       </div>
       ${it.lit ? block('Literally', esc(it.lit)) : ''}
@@ -443,7 +468,7 @@
       ${pics ? block('Picture', `<div class="pics">${pics}</div>`) : ''}
       ${it.m ? block(it.sid === 'proverbs' ? '📜 Story' : '🧠 Memory hook', esc(it.m)) : ''}
       ${it.mw ? block('Measure word', mwPhrase(it)) : ''}
-      ${it.x ? block('Example', `<div class="ex">${hz(it.x[0], it.x[1])} ${sayBtn(it.x[0])}<div>${py(it.x[1])}</div><div class="muted">${esc(it.x[2])}</div></div>`) : ''}
+      ${it.x ? block('Example', `<div class="ex">${hz(it.x[0], it.x[1])} ${sayBtn(it.x[0])}${slowBtn(it.x[0], it.x[1])}<div>${py(it.x[1])}</div><div class="muted">${esc(it.x[2])}</div></div>`) : ''}
       ${it.n ? block('Note', esc(it.n)) : ''}
       <p class="d-status">${status}</p>
       <button class="btn wide" data-act="close-sheet">Close</button>
@@ -462,7 +487,6 @@
   // ---------- runs (chapter runs, reviews, weak-word practice) ----------
   function startRun(kind, items, opts = {}) {
     if (!items.length) return;
-    if (RUN) clearTimeout(RUN.timer);
     RUN = { kind, ...opts, queue: shuffle(items.slice()), total: items.length, done: new Set(), first: new Map(), mistakes: 0, missed: new Set(), finished: false };
     if (kind === 'chapter') { S.last = { sid: opts.sid, cid: opts.cid }; save(); }
     nextCard();
@@ -475,7 +499,6 @@
     return pick(m.flatMap((x) => Array(weight[x] || 1).fill(x)));
   }
   function nextCard() {
-    clearTimeout(RUN.timer);
     if (!RUN.queue.length) return finishRun();
     const it = RUN.queue[0];
     const mode = RUN.kind === 'chapter' ? RUN.mode : reviewMode(it);
@@ -543,12 +566,9 @@
     else { RUN.mistakes++; RUN.missed.add(it.id); RUN.queue.splice(Math.min(RUN.queue.length, 3), 0, it); }
     save();
     if (settled) return nextCard();
+    // Feedback stays on screen until the learner taps Continue.
     renderRun();
     if (S.settings.autoplay && c.dir === 'en2zh') Speech.say(it.hz);
-    if (ok) {
-      const wait = it.sid === 'sentences' || c.mode === 'flash' || c.mode === 'build' ? 1800 : 1200;
-      RUN.timer = setTimeout(() => { if (RUN && RUN.cur === c) nextCard(); }, wait);
-    }
   }
   function pickOpt(i) {
     const c = RUN && RUN.cur;
@@ -711,9 +731,9 @@
   // ---------- run rendering ----------
   function sizeClass(s) { const n = [...s].filter(isHan).length; return n <= 2 ? 'xl' : n <= 4 ? 'l' : n <= 8 ? 'm' : 's'; }
   const promptEn = (it) => `<div class="q">${it.img ? `<div class="q-img">${it.img}</div>` : ''}<div class="q-en">${esc(it.e)}</div></div>`;
-  const promptZh = (it) => `<div class="q"><div class="q-hz ${sizeClass(it.hz)}">${hz(it.h, it.p)}</div>${S.settings.showPinyin ? `<div class="q-py">${py(it.p)}</div>` : ''}<div class="q-say">${sayBtn(it.hz)}${slowBtn(it.hz)}</div></div>`;
+  const promptZh = (it) => `<div class="q"><div class="q-hz ${sizeClass(it.hz)}">${hz(it.h, it.p)}</div>${S.settings.showPinyin ? `<div class="q-py">${py(it.p)}</div>` : ''}<div class="q-say">${sayBtn(it.hz)}${slowBtn(it.h, it.p)}</div></div>`;
   function listenPrompt(it, revealed, question) {
-    return `<div class="q"><div class="q-say big">${sayBtn(it.hz, '🔊', 'big-say')}${slowBtn(it.hz, '🐢')}</div>
+    return `<div class="q"><div class="q-say big">${sayBtn(it.hz, '🔊', 'big-say')}${slowBtn(it.h, it.p)}</div>
       <div class="q-hint">${revealed ? `${hz(it.h, it.p)} ${py(it.p)}` : question}</div></div>`;
   }
   function reveal(it) {
@@ -893,7 +913,7 @@
         <div class="legend tones-legend">${[1, 2, 3, 4, 5].map((t) => `<span class="t${t}">${contour(t)} ${TONE_ORD[t]}</span>`).join('')}</div>
         ${toggle('showPinyin', 'Show pinyin in questions', 'Turn off to practise reading hanzi on their own')}
         ${toggle('autoplay', 'Play audio automatically', 'Speak the Chinese when a card is shown or answered')}
-        <label class="set-row"><span class="grow"><b>Speech speed</b><small id="rate-val">${st.rate.toFixed(2)}×</small></span><input type="range" min="0.5" max="1.1" step="0.05" value="${st.rate}" data-set="rate"></label>
+        <label class="set-row"><span class="grow"><b>Speech speed</b><small><span id="rate-val">${st.rate.toFixed(2)}×</span> · recent iPhones may ignore this; 🐢 always splits the speech into pieces with pauses</small></span><input type="range" min="0.5" max="1.1" step="0.05" value="${st.rate}" data-set="rate"></label>
         <div class="set-row"><span class="grow"><b>Voice</b><small>${voice}</small></span><button class="btn small" data-act="say" data-t="你好，欢迎你学中文！">Test</button></div>
         ${Speech.ok && !Speech.voice ? '<p class="hint">On iPhone: Settings → Accessibility → Spoken Content → Voices → Chinese → download a voice such as Tingting.</p>' : ''}
       </div>
@@ -983,7 +1003,7 @@
     const digits = D.n.toLocaleString('en-US');
     let q = '', foot = '';
     if (D.mode === 'read') q = `<div class="q-hz ${sizeClass(zh)}">${hz(zh, p)}</div>${asking ? '' : `<div class="q-py">${py(p)}</div>`}`;
-    else if (D.mode === 'listen') q = `<div class="q-say big">${sayBtn(zh, '🔊', 'big-say')}${slowBtn(zh)}</div>${asking ? '<div class="q-hint">Type the number you hear</div>' : `<div class="q-hz m">${hz(zh, p)}</div><div class="q-py">${py(p)}</div>`}`;
+    else if (D.mode === 'listen') q = `<div class="q-say big">${sayBtn(zh, '🔊', 'big-say')}${slowBtn(zh, p)}</div>${asking ? '<div class="q-hint">Type the number you hear</div>' : `<div class="q-hz m">${hz(zh, p)}</div><div class="q-py">${py(p)}</div>`}`;
     else q = `<div class="q-num">${digits}</div>${asking ? '<div class="q-hint">Say it out loud in Chinese, then check</div>' : `<div class="q-hz m">${hz(zh, p)}</div><div class="q-py">${py(p)}</div>`}`;
     let fb = '';
     if (asking && D.mode !== 'say') {
@@ -1019,8 +1039,8 @@
 
   // ---------- events ----------
   const ACTIONS = {
-    say: (el) => Speech.say(el.dataset.t, !!el.dataset.slow),
-    detail: (el) => { if (RUN) clearTimeout(RUN.timer); openSheet(ITEMS[el.dataset.id]); },
+    say: (el) => Speech.say(el.dataset.t, !!el.dataset.slow, el.dataset.p),
+    detail: (el) => openSheet(ITEMS[el.dataset.id]),
     'close-sheet': closeSheet,
     noop: () => {},
     'hide-install': () => { S.settings.hideInstall = true; save(); route(); },
@@ -1105,5 +1125,5 @@
   }
 
   // Exposed for debugging and tests only.
-  window.XZW = { numZh, numPy, gradePinyin, gradeWrite, align, state: () => S, run: () => RUN, ITEMS, PICTO, pictoHTML };
+  window.XZW = { numZh, numPy, gradePinyin, gradeWrite, slowText, align, state: () => S, run: () => RUN, ITEMS, PICTO, pictoHTML };
 })();

@@ -24,7 +24,7 @@ tone-colored hanzi and pinyin, iPhone text-to-speech, memory hooks and pictograp
 ## Develop and publish
 
 ```bash
-python3 -m http.server 8765 --directory app      # preview at http://localhost:8765
+python3 -m http.server 8766 --directory app      # preview at http://localhost:8766
 python3 tools/validate.py && python3 tools/stamp.py
 git add -A && git commit -m "…" && git push      # then publish the app folder:
 git subtree push --prefix app origin gh-pages
