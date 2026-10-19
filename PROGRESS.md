@@ -127,6 +127,17 @@ Merged into main 2026-10-18.
 - Not published as recorded audio files: macOS system voices may not be redistributed.
 - Local preview port moved to 8766 (8765 is used by the Biophysics Course session's server).
 
+Merged into main 2026-10-19.
+
+## Change 4: slower 🐢 + visible version (branch `feature/slower-slow-mode`, 2026-10-19)
+- User wasn't sure the previous update arrived and wanted 🐢 even slower.
+- 🐢 now speaks each piece from `slowChunks()` as its own utterance, chained on `onend` with a
+  pause (`settings.slowGap`: short 350 / medium 700 / long 1200 ms; Settings → "🐢 Slow mode pauses").
+  Utterances are kept in `Speech.live` (Safari drops onend for GC'd utterances), a timeout covers
+  a missing onend, and `Speech.seq` cancels an old sequence when new audio starts.
+- `APP_VERSION` is now real (1.4) and shown on Home + Settings. **Bump it on every release.**
+- Settings → "Check for updates": `reg.update()`, then reloads on `controllerchange`.
+
 ## Content plan (verbs + adjectives, in case they need redoing)
 - verbs.js (id verbs, 动词 dòng cí, 🏃, English "to …"): essentials 是 有 在 去 来 要 想 会 能 可以 ·
   daily-life 吃 喝 睡觉 起床 洗澡 穿 做饭 上班 回家 休息 · moving 走 跑 坐 站 进 出 到 回 开车 骑 ·
