@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.4';
   const SECTION_ORDER = ['nouns', 'verbs', 'adjectives', 'proverbs', 'sentences', 'counting', 'tones'];
   const MODES = {
     flash: { icon: '✍️', name: 'Flashcards', desc: 'Write the answer: pinyin, 汉字 or English', dirs: true },
@@ -46,7 +46,7 @@
 
   // ---------- saved state ----------
   const STORE_KEY = 'xuezhongwen.v1';
-  const DEFAULT_SETTINGS = { toneColors: true, showPinyin: true, autoplay: true, rate: 0.8, strictTones: false, dailyGoal: 20, theme: 'auto', dirs: {}, hideInstall: false };
+  const DEFAULT_SETTINGS = { toneColors: true, showPinyin: true, autoplay: true, rate: 0.8, strictTones: false, dailyGoal: 20, theme: 'auto', dirs: {}, hideInstall: false, slowGap: 'medium' };
   const STATE_VERSION = 2;
   const LEARN_STREAK = 3; // written right this many runs/reviews in a row = learned
   const PASSES_NEEDED = 2; // mistake-free written runs to complete a chapter
@@ -150,17 +150,35 @@
       choose();
       speechSynthesis.onvoiceschanged = choose;
     },
-    // `p` (pinyin) lets slow speech split the text safely; without it slow only lowers the rate.
+    // Slow speech says each piece (see slowChunks) as its own utterance with a pause after it;
+    // `p` (pinyin) lets it split safely. Recent iOS ignores `rate`, so the pauses do the slowing.
     say(text, slow, p) {
       if (!this.ok) { toast('Audio is not available in this browser'); return; }
-      const u = new SpeechSynthesisUtterance(slow ? slowText(String(text), p) : String(text).replace(/\s+/g, ''));
-      u.lang = 'zh-CN';
-      if (this.voice) u.voice = this.voice;
-      u.rate = slow ? Math.max(0.35, S.settings.rate * 0.6) : S.settings.rate;
+      const parts = slow ? slowChunks(String(text), p) : [String(text).replace(/\s+/g, '')];
+      const rate = slow ? Math.max(0.35, S.settings.rate * 0.6) : S.settings.rate;
+      const gap = SLOW_GAPS[S.settings.slowGap] || SLOW_GAPS.medium;
+      const token = (this.seq = (this.seq || 0) + 1);
+      this.live = []; // Safari drops onend for utterances that get garbage-collected, so keep them
+      let i = 0;
+      const speakNext = () => {
+        if (token !== this.seq || i >= parts.length) return;
+        const piece = parts[i++];
+        const u = new SpeechSynthesisUtterance(piece);
+        u.lang = 'zh-CN';
+        if (this.voice) u.voice = this.voice;
+        u.rate = rate;
+        let done = false;
+        const next = () => { if (!done) { done = true; setTimeout(speakNext, gap); } };
+        u.onend = next;
+        u.onerror = next;
+        setTimeout(next, 1500 + 900 * piece.length); // in case onend never fires
+        this.live.push(u);
+        speechSynthesis.speak(u);
+      };
       if (speechSynthesis.speaking || speechSynthesis.pending) {
         speechSynthesis.cancel();
-        setTimeout(() => speechSynthesis.speak(u), 80);
-      } else speechSynthesis.speak(u);
+        setTimeout(speakNext, 80);
+      } else speakNext();
     },
     // iOS only allows speech after a user gesture; speaking a silent utterance on the first tap unlocks it.
     unlock() {
@@ -169,29 +187,32 @@
       const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u);
     },
   };
-  // Recent iOS versions ignore the speaking rate, so slow speech also pauses between pieces:
-  // word by word when the text has word spaces (sentences), otherwise syllable by syllable.
-  // Neutral-tone syllables stay with the syllable before them and 一/不 with the one after,
-  // because said on their own they would get the wrong tone.
-  function slowText(text, p) {
+  const SLOW_GAPS = { short: 350, medium: 700, long: 1200 }; // ms of silence between slow pieces
+  // Pieces for slow speech: word by word when the text has word spaces (sentences), otherwise
+  // syllable by syllable. Neutral-tone syllables stay with the syllable before them and 一/不 with
+  // the one after, because said on their own they would get the wrong tone.
+  function slowChunks(text, p) {
     const t = text.trim();
-    const end = /[？！?!]$/.test(t) ? t.slice(-1) : '。';
     const words = t.split(/\s+/).map((w) => [...w].filter(isHan)).filter((w) => w.length);
     const wordMode = words.length > 1;
-    if (!p) return wordMode ? words.map((w) => w.join('')).join('，') + end : t;
-    const tones = p.trim().split(/\s+/).map(toneOf);
-    const chunks = [];
-    let k = 0, prev = null;
-    for (const w of words) {
-      w.forEach((c, j) => {
-        const tone = tones[k++] || 5;
-        const boundary = wordMode ? j === 0 : true;
-        const attach = chunks.length && (!boundary || tone === 5 || prev === '一' || prev === '不');
-        if (attach) chunks[chunks.length - 1] += c; else chunks.push(c);
-        prev = c;
-      });
+    let chunks;
+    if (!p) chunks = wordMode ? words.map((w) => w.join('')) : [t];
+    else {
+      const tones = p.trim().split(/\s+/).map(toneOf);
+      chunks = [];
+      let k = 0, prev = null;
+      for (const w of words) {
+        w.forEach((c, j) => {
+          const tone = tones[k++] || 5;
+          const boundary = wordMode ? j === 0 : true;
+          const attach = chunks.length && (!boundary || tone === 5 || prev === '一' || prev === '不');
+          if (attach) chunks[chunks.length - 1] += c; else chunks.push(c);
+          prev = c;
+        });
+      }
     }
-    return chunks.join('，') + end;
+    if (/[？?]$/.test(t) && chunks.length) chunks[chunks.length - 1] += '？'; // keep question intonation
+    return chunks;
   }
   const sayBtn = (text, label = '🔊', cls = '') => `<button class="say ${cls}" data-act="say" data-t="${esc(text)}" aria-label="Play audio">${label}</button>`;
   const slowBtn = (text, p, label = '🐢') => `<button class="say slow" data-act="say" data-slow="1" data-t="${esc(text)}" data-p="${esc(p || '')}" aria-label="Play slowly">${label}</button>`;
@@ -332,7 +353,7 @@
       ${continueCard()}
       <h2 class="h2">Sections</h2>
       ${SECTIONS.map(sectionCard).join('')}
-      <p class="foot">Tap 🔊 to hear any word · tap a word to see its memory hook</p>`);
+      <p class="foot">Tap 🔊 to hear any word · tap a word to see its memory hook<br>Version ${APP_VERSION}</p>`);
   }
   function installHint() {
     const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -913,7 +934,10 @@
         <div class="legend tones-legend">${[1, 2, 3, 4, 5].map((t) => `<span class="t${t}">${contour(t)} ${TONE_ORD[t]}</span>`).join('')}</div>
         ${toggle('showPinyin', 'Show pinyin in questions', 'Turn off to practise reading hanzi on their own')}
         ${toggle('autoplay', 'Play audio automatically', 'Speak the Chinese when a card is shown or answered')}
-        <label class="set-row"><span class="grow"><b>Speech speed</b><small><span id="rate-val">${st.rate.toFixed(2)}×</span> · recent iPhones may ignore this; 🐢 always splits the speech into pieces with pauses</small></span><input type="range" min="0.5" max="1.1" step="0.05" value="${st.rate}" data-set="rate"></label>
+        <label class="set-row"><span class="grow"><b>🐢 Slow mode pauses</b><small>Slow audio says one piece at a time; this is the pause between pieces</small></span>
+          <select data-set="slowGap">${[['short', 'Short'], ['medium', 'Medium'], ['long', 'Long']].map(([v, l]) => `<option value="${v}" ${st.slowGap === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <div class="set-row"><span class="grow"><b>Try slow mode</b><small>${hz('我想喝一杯咖啡。', 'Wǒ xiǎng hē yì bēi kā fēi.')}</small></span>${slowBtn('我 想 喝 一杯 咖啡。', 'Wǒ xiǎng hē yì bēi kā fēi.', '🐢 Play')}</div>
+        <label class="set-row"><span class="grow"><b>Speech speed</b><small><span id="rate-val">${st.rate.toFixed(2)}×</span> · recent iPhones may ignore this setting</small></span><input type="range" min="0.5" max="1.1" step="0.05" value="${st.rate}" data-set="rate"></label>
         <div class="set-row"><span class="grow"><b>Voice</b><small>${voice}</small></span><button class="btn small" data-act="say" data-t="你好，欢迎你学中文！">Test</button></div>
         ${Speech.ok && !Speech.voice ? '<p class="hint">On iPhone: Settings → Accessibility → Spoken Content → Voices → Chinese → download a voice such as Tingting.</p>' : ''}
       </div>
@@ -934,6 +958,11 @@
         <h3>Install on iPhone</h3>
         <ol class="steps"><li>Open this page in <b>Safari</b>.</li><li>Tap the <b>Share</b> button <span class="share">⬆︎</span>.</li><li>Choose <b>Add to Home Screen</b>, then <b>Add</b>.</li></ol>
         <p class="muted">It then opens full screen from its own icon and works offline.</p>
+      </div>
+      <div class="card set">
+        <h3>App version</h3>
+        <p class="muted">You have <b>version ${APP_VERSION}</b>. Updates install by themselves after you close and reopen the app; this button checks right away.</p>
+        <button class="btn wide" data-act="check-update">Check for updates</button>
       </div>
       <p class="foot">学中文 v${APP_VERSION} · ${Object.keys(ITEMS).length} words &amp; phrases</p>`);
   }
@@ -1118,12 +1147,25 @@
 
   // Offline cache; skipped on localhost during development unless the URL has ?sw=1.
   const devHost = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && !/[?&]sw=1/.test(location.search);
+  let reloadOnUpdate = false;
   if ('serviceWorker' in navigator && location.protocol.startsWith('http') && !devHost) {
     const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.register('sw.js').catch(() => {});
-    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) toast('✓ App updated — close and reopen it to see what’s new'); });
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloadOnUpdate) location.reload();
+      else if (hadController) toast('✓ App updated — close and reopen it to see what’s new');
+    });
   }
+  ACTIONS['check-update'] = async () => {
+    const reg = 'serviceWorker' in navigator && (await navigator.serviceWorker.getRegistration().catch(() => null));
+    if (!reg) return toast('Updates load when you open the app with internet');
+    toast('Checking for updates…');
+    try { await reg.update(); } catch (e) { return toast('Could not check — are you online?'); }
+    if (!reg.installing && !reg.waiting) return toast(`✓ You have the latest version (v${APP_VERSION})`);
+    reloadOnUpdate = true; // the new version takes over in a moment; reload into it
+    toast('Downloading the new version…');
+  };
 
   // Exposed for debugging and tests only.
-  window.XZW = { numZh, numPy, gradePinyin, gradeWrite, slowText, align, state: () => S, run: () => RUN, ITEMS, PICTO, pictoHTML };
+  window.XZW = { numZh, numPy, gradePinyin, gradeWrite, slowChunks, align, state: () => S, run: () => RUN, ITEMS, PICTO, pictoHTML };
 })();
