@@ -1,6 +1,6 @@
 /* Offline support: cache every app file, serve from cache, refresh when VERSION changes.
    VERSION and ASSETS are rewritten by tools/stamp.py — run it after changing any app file. */
-const VERSION = '52dda758aa';
+const VERSION = '1b2e0c0d77';
 const ASSETS = [
   './',
   'index.html',
@@ -17,6 +17,8 @@ const ASSETS = [
   'js/data/sentences.js',
   'js/data/tones.js',
   'js/data/verbs.js',
+  'js/vendor/pinyin-pro.LICENSE.txt',
+  'js/vendor/pinyin-pro.js',
   'manifest.webmanifest',
 ];
 const CACHE = `xuezhongwen-${VERSION}`;

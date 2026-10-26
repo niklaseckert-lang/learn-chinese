@@ -146,6 +146,31 @@ Merged into main 2026-10-19 (first push failed during a Mac kernel panic; retry 
 - Slowest also splits sentences syllable by syllable (`slowChunks(text, p, bySyllable)`), still
   keeping neutral tones and 一/不 attached.
 
+Merged into main 2026-10-19.
+
+## Change 6: "My words" section — v1.6 (branch `feature/my-words`, 2026-10-26)
+- User types English (or Chinese) → app translates → preview with editable English/汉字/pinyin →
+  Save. Entries live ONLY on the phone in `S.custom.items` ({id, e, h, p, img?, m?, x?, n?, st, t};
+  st 'mt' machine / 'pol' polished / 'todo' no Chinese yet). They're in backups, never on GitHub.
+- Translation: MyMemory (`api.mymemory.translated.net/get`, free, no key, CORS ok). Typed text is
+  sent there (disclosed in the UI). Alternatives shown only for close matches (match ≥ 0.75).
+- Pinyin: pinyin-pro 3.28.2 (MIT) vendored at `app/js/vendor/pinyin-pro.js` (sha512 checked against
+  npm, no network code), loaded lazily. It applies 一/不 sandhi but NOT neutral tones (朋友 → péng yǒu).
+- `buildMine()` groups ready entries into chapters of 10 (`mine/c1`…); chapter progress carries a
+  `sig` (entry ids) and resets if the chapter's entries change. Modes: flash/choice/listen;
+  multiple choice borrows options from built-in words when the library is small.
+- Edit/Delete from the word sheet; "Waiting for translation" list for offline saves.
+
+### Claude polish exchange (IMPORTANT for future sessions)
+- The app's "📋 Copy for Claude" produces text containing `XZW-MINE-REQUEST` followed by a JSON
+  array of `{id, e, h, p}` (h/p may be empty for entries still waiting for a translation).
+- Reply with ONE code block that starts with the line `XZW-MINE` followed by a JSON array, same ids:
+  `{"id","e","h","p","img","m","x":[hanzi,pinyin,english],"n"}`. Follow DATA_FORMAT.md rules: one
+  pinyin syllable per hanzi, tone marks, neutral tone unmarked, 一/不 as spoken, no erhua; `img` = one
+  emoji; `m` = memory hook (real components); `x` = short HSK-level example containing the word.
+  Fix bad machine translations (e.g. "library" → 图书馆, not 库; "to run" → 跑, not 运行).
+- The app validates every entry (h/p and example alignment) and skips ones that don't check out.
+
 ## Content plan (verbs + adjectives, in case they need redoing)
 - verbs.js (id verbs, 动词 dòng cí, 🏃, English "to …"): essentials 是 有 在 去 来 要 想 会 能 可以 ·
   daily-life 吃 喝 睡觉 起床 洗澡 穿 做饭 上班 回家 休息 · moving 走 跑 坐 站 进 出 到 回 开车 骑 ·

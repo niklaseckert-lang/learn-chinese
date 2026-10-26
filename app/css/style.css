@@ -430,3 +430,21 @@ a.card:active, button.card:active, .word:active, .mode:active, .opt:active, .til
 .tag.pass { color: var(--accent); border-color: var(--accent); }
 .fb-streak { font-size: 14px; margin-bottom: 8px; color: var(--muted); letter-spacing: 0.02em; }
 .fb-streak.learned { color: var(--good); font-weight: 700; }
+
+/* My words */
+.add-card { display: grid; gap: 10px; }
+.add-card textarea, .card textarea, .field input {
+  width: 100%; font: inherit; font-size: 17px; padding: 12px 14px; border-radius: 12px; border: 2px solid var(--line);
+  background: var(--bg); color: var(--ink); outline: none; -webkit-appearance: none; appearance: none; resize: vertical;
+}
+.add-card textarea:focus, .card textarea:focus, .field input:focus { border-color: var(--accent); }
+.card textarea { margin-top: 10px; }
+.field { display: grid; gap: 4px; margin: 8px 0; }
+.field span { font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.draft { border: 1.5px solid var(--accent); }
+.alts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+.alts small { width: 100%; }
+.alts .chip { font-size: 18px; }
+.word.todo { grid-template-columns: 34px 1fr auto auto; }
+.copybox { font: 13px/1.4 ui-monospace, Menlo, monospace; }
+.btn:disabled { opacity: 0.5; }
