@@ -3,7 +3,7 @@
 (function () {
   'use strict';
 
-  const APP_VERSION = '1.5';
+  const APP_VERSION = '1.6';
   const SECTION_ORDER = ['nouns', 'verbs', 'adjectives', 'proverbs', 'sentences', 'counting', 'tones'];
   const MODES = {
     flash: { icon: '✍️', name: 'Flashcards', desc: 'Write the answer: pinyin, 汉字 or English', dirs: true },
@@ -18,6 +18,7 @@
     proverbs: ['flash', 'choice', 'listen', 'build'],
     sentences: ['flash', 'choice', 'listen', 'build'],
     tones: ['tone'],
+    mine: WORD_MODES,
   };
   const TONE_NAME = { 1: 'high & flat', 2: 'rising', 3: 'dipping', 4: 'falling', 5: 'neutral' };
   const TONE_ORD = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th', 5: 'neutral' };
@@ -30,7 +31,7 @@
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
-  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const plural = (n, w, many = `${w}s`) => `${n} ${n === 1 ? w : many}`;
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
   const dayKey = (t) => { const d = new Date(t ?? Date.now()); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
   const addDays = (n) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + n); return d.getTime(); };
@@ -50,7 +51,7 @@
   const STATE_VERSION = 2;
   const LEARN_STREAK = 3; // written right this many runs/reviews in a row = learned
   const PASSES_NEEDED = 2; // mistake-free written runs to complete a chapter
-  const freshState = () => ({ v: STATE_VERSION, srs: {}, chapters: {}, days: {}, last: null, drillBest: 0, settings: { ...DEFAULT_SETTINGS } });
+  const freshState = () => ({ v: STATE_VERSION, srs: {}, chapters: {}, days: {}, last: null, drillBest: 0, custom: { items: [] }, settings: { ...DEFAULT_SETTINGS } });
   // Brings saved progress (from storage or a backup file) up to the current rules.
   function upgrade(saved) {
     const from = saved.v || 1;
@@ -61,6 +62,7 @@
       for (const r of Object.values(s.srs)) { delete r.ws; delete r.L; }
       s.chapters = {};
     }
+    if (!s.custom || !Array.isArray(s.custom.items)) s.custom = { items: [] };
     s.v = STATE_VERSION;
     return s;
   }
@@ -95,8 +97,12 @@
       });
     });
   }
+  // "My words": the learner's own entries (S.custom.items), grouped into chapters of 10 by buildMine().
+  const MINE = { id: 'mine', title: 'My words', zh: '我的词', py: 'wǒ de cí', icon: '✏️', desc: 'Your own words and sentences: type English, get Chinese', chapters: [], all: [] };
+  SECTIONS.unshift(MINE); SEC.mine = MINE;
   const chapterOf = (sid, cid) => SEC[sid] && SEC[sid].chapters.find((c) => c.id === cid);
-  const chState = (ch) => S.chapters[ch.key] || {};
+  // My words chapters change as entries are added or removed; progress only counts for the same set (sig).
+  const chState = (ch) => { const st = S.chapters[ch.key] || {}; return ch.sig && st.sig !== ch.sig ? {} : st; };
 
   // ---------- pinyin & tones ----------
   const MARKED = 'āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ';
@@ -382,8 +388,9 @@
       <span class="grow">
         <span class="sec-title"><b>${esc(s.title)}</b> ${hz(s.zh, s.py)}</span>
         <span class="sec-desc">${esc(s.desc)}</span>
+        ${s.id === 'mine' && !s.all.length ? '<span class="sec-meta">Tap to add your first word ›</span>' : `
         <i class="meter"><i style="width:${pct(done, s.chapters.length)}%"></i></i>
-        <span class="sec-meta">${done}/${s.chapters.length} chapters complete · ${learnedIn(s.all)}/${s.all.length} learned</span>
+        <span class="sec-meta">${done}/${s.chapters.length} chapters complete · ${learnedIn(s.all)}/${s.all.length} learned</span>`}
       </span><span class="chev">›</span></a>`;
   }
 
@@ -391,22 +398,27 @@
   function renderSection(sid) {
     const s = SEC[sid];
     if (!s) return go('#/');
+    if (sid === 'mine') return renderMine();
     const extra = sid === 'counting' ? drillCard() : sid === 'tones' ? tonesGuide() : '';
-    const unit = sid === 'sentences' ? 'sentences' : sid === 'proverbs' ? 'sayings' : 'words';
     render(`${header(esc(s.title), '#/')}
       <div class="sec-head"><span class="big-ico">${s.icon}</span><div>${hz(s.zh, s.py, 'sec-zh')}<div>${py(s.py)}</div></div></div>
       <p class="muted">${esc(s.desc)}</p>
       ${extra}
-      ${s.chapters.map((ch, i) => {
-        const st = chState(ch);
-        const stars = sid === 'tones' ? '' : `<span class="stars" title="English→中文 / 中文→English">${star(st.en2zh)}${star(st.zh2en)}</span>`;
-        const passes = st.done ? '✓ complete' : `${st.passes || 0}/${PASSES_NEEDED} passes`;
-        return `<a class="card chap ${st.done ? 'done' : st.passes ? 'half' : ''}" href="#/c/${sid}/${ch.id}">
-          <span class="chap-num">${st.done ? '✓' : i + 1}</span>
-          <span class="grow"><b>${esc(ch.title)}</b> <span class="chap-zh" lang="zh-Hans">${esc(ch.zh)}</span>
-          <small>${learnedIn(ch.items)}/${ch.items.length} ${unit} learned · ${passes}</small></span>
-          ${stars}<span class="chev">›</span></a>`;
-      }).join('')}`);
+      ${chapterRows(s)}`);
+  }
+  function chapterRows(s) {
+    const sid = s.id;
+    const unit = sid === 'sentences' ? 'sentences' : sid === 'proverbs' ? 'sayings' : sid === 'mine' ? 'entries' : 'words';
+    return s.chapters.map((ch, i) => {
+      const st = chState(ch);
+      const stars = sid === 'tones' ? '' : `<span class="stars" title="English→中文 / 中文→English">${star(st.en2zh)}${star(st.zh2en)}</span>`;
+      const passes = st.done ? '✓ complete' : `${st.passes || 0}/${PASSES_NEEDED} passes`;
+      return `<a class="card chap ${st.done ? 'done' : st.passes ? 'half' : ''}" href="#/c/${sid}/${ch.id}">
+        <span class="chap-num">${st.done ? '✓' : i + 1}</span>
+        <span class="grow"><b>${esc(ch.title)}</b> <span class="chap-zh" lang="zh-Hans">${esc(ch.zh)}</span>
+        <small>${learnedIn(ch.items)}/${ch.items.length} ${unit} learned · ${passes}</small></span>
+        ${stars}<span class="chev">›</span></a>`;
+    }).join('');
   }
   const star = (on) => `<span class="star ${on ? 'on' : ''}">★</span>`;
   const passDots = (n) => Array.from({ length: PASSES_NEEDED }, (_, i) => `<span class="pdot ${i < n ? 'on' : ''}"></span>`).join('');
@@ -493,6 +505,8 @@
       ${it.mw ? block('Measure word', mwPhrase(it)) : ''}
       ${it.x ? block('Example', `<div class="ex">${hz(it.x[0], it.x[1])} ${sayBtn(it.x[0])}${slowBtn(it.x[0], it.x[1])}<div>${py(it.x[1])}</div><div class="muted">${esc(it.x[2])}</div></div>`) : ''}
       ${it.n ? block('Note', esc(it.n)) : ''}
+      ${it.sid === 'mine' ? block('Your entry', `<p class="muted">${it.rec.st === 'pol' ? '✨ Polished by Claude.' : '🤖 Machine translation — not yet checked by Claude.'}</p>
+        <div class="row2"><button class="btn" data-act="mine-edit" data-id="${esc(it.rec.id)}">✏️ Edit</button><button class="btn danger" data-act="mine-delete" data-id="${esc(it.rec.id)}">🗑 Delete</button></div>`) : ''}
       <p class="d-status">${status}</p>
       <button class="btn wide" data-act="close-sheet">Close</button>
     </div></div>`;
@@ -536,6 +550,8 @@
   function makeChoices(it, dir) {
     const key = (x) => (dir === 'zh2en' ? x.e.toLowerCase() : x.hz);
     const pool = shuffle(it.ch.items.filter((x) => x !== it)).concat(shuffle(SEC[it.sid].all.filter((x) => x.ch !== it.ch)));
+    // A small My words library borrows wrong options from the built-in words.
+    if (pool.length < 3) pool.push(...shuffle(Object.values(ITEMS).filter((x) => x.sid !== it.sid && x.sid !== 'tones')).slice(0, 12));
     const out = [it], seen = new Set([key(it)]);
     for (const x of pool) {
       if (out.length >= 4) break;
@@ -662,7 +678,7 @@
     return lev(a, b) <= (n <= 4 ? 0 : n <= 8 ? 1 : Math.floor(n * 0.15));
   }
   function enCandidates(it) {
-    const words = it.sid !== 'sentences' && it.sid !== 'proverbs';
+    const words = it.sid !== 'sentences' && it.sid !== 'proverbs' && !(it.sid === 'mine' && it.e.trim().split(/\s+/).length >= 4);
     const out = new Set([it.e, it.lit, it.eq].filter(Boolean));
     for (const sense of it.e.split(/\s*;\s*/)) {
       out.add(sense);
@@ -728,7 +744,11 @@
     RUN.perfect = RUN.mistakes === 0;
     if (RUN.kind === 'chapter') {
       const key = `${RUN.sid}/${RUN.cid}`;
-      const st = (S.chapters[key] = S.chapters[key] || { done: false, passes: 0, en2zh: false, zh2en: false, runs: 0, best: null });
+      const ch = chapterOf(RUN.sid, RUN.cid);
+      let st = S.chapters[key];
+      if (!st || (ch && ch.sig && st.sig !== ch.sig)) {
+        st = S.chapters[key] = { done: false, passes: 0, en2zh: false, zh2en: false, runs: 0, best: null, ...(ch && ch.sig ? { sig: ch.sig } : {}) };
+      }
       RUN.wasDone = st.done;
       RUN.counts = countsAsPass(RUN.mode, RUN.sid);
       if (RUN.counts) {
@@ -1068,6 +1088,238 @@
   }
   function drillNext() { newDrill(); renderDrill(); if (DRILL.mode === 'listen') Speech.say(numZh(DRILL.n)); }
 
+  // ---------- My words ----------
+  // Entries live in S.custom.items as { id, e, h, p, img?, m?, x?, n?, st, t }. st: 'mt' machine
+  // translation, 'pol' polished by Claude, 'todo' waiting for a translation (no Chinese yet).
+  const MINE_UI = { draft: null, importOpen: false };
+  const mineRecs = () => S.custom.items;
+  const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const hanCount = (s) => [...s].filter(isHan).length;
+  const sylCount = (p) => p.trim().split(/\s+/).filter((t) => /[a-zü]/i.test(toneless(t))).length;
+  const aligned = (h, p) => hanCount(h) > 0 && hanCount(h) === sylCount(p);
+
+  function buildMine() {
+    for (const id of Object.keys(ITEMS)) if (id.startsWith('mine:')) delete ITEMS[id];
+    const ready = mineRecs().filter((r) => r.h && r.p && aligned(r.h, r.p));
+    MINE.chapters = [];
+    for (let i = 0; i < ready.length; i += 10) {
+      const n = i / 10 + 1;
+      const ch = { id: `c${n}`, title: `Chapter ${n}`, zh: `第${numZh(n)}课`, sid: 'mine', key: `mine/c${n}`, index: n - 1, items: [] };
+      for (const r of ready.slice(i, i + 10)) {
+        const it = { h: r.h, p: r.p, e: r.e, img: r.img || '', m: r.m || '', x: r.x || null, n: r.n || '', sid: 'mine', ch, rec: r, hz: r.h, id: `mine:${r.id}` };
+        ITEMS[it.id] = it; ch.items.push(it);
+      }
+      ch.sig = ch.items.map((x) => x.rec.id).join(',');
+      MINE.chapters.push(ch);
+    }
+    MINE.all = MINE.chapters.flatMap((c) => c.items);
+  }
+
+  // "ni3 hao3" → "nǐ hǎo"; syllables that already have marks are left alone.
+  function numberedToMarked(p) {
+    return p.trim().split(/\s+/).map((tok) => {
+      const m = tok.toLowerCase().replace(/u:|v/g, 'ü').match(/^([a-zü]+)([0-5])$/);
+      if (!m) return tok;
+      const [, syl, t] = m;
+      if (t === '0' || t === '5') return syl;
+      let i = syl.search(/[ae]/);
+      if (i < 0) i = syl.indexOf('ou');
+      if (i < 0) for (let k = 0; k < syl.length; k++) if ('iouü'.includes(syl[k])) i = k;
+      if (i < 0) return syl;
+      return syl.slice(0, i) + MARKED['aeiouü'.indexOf(syl[i]) * 4 + (+t - 1)] + syl.slice(i + 1);
+    }).join(' ');
+  }
+
+  // Pinyin comes from pinyin-pro (js/vendor, MIT), loaded the first time it is needed.
+  let pinyinLoading = null;
+  function makePinyin(h) {
+    if (!pinyinLoading) {
+      pinyinLoading = window.pinyinPro ? Promise.resolve() : new Promise((res, rej) => {
+        const sc = document.createElement('script');
+        sc.src = 'js/vendor/pinyin-pro.js';
+        sc.onload = res;
+        sc.onerror = () => { pinyinLoading = null; rej(new Error('pinyin')); };
+        document.head.appendChild(sc);
+      });
+    }
+    return pinyinLoading.then(() => window.pinyinPro.pinyin(h, { type: 'array', nonZh: 'removed' }).join(' '));
+  }
+
+  // Translation by MyMemory (free, no account). What the learner types is sent to that service.
+  async function translate(text, from, to) {
+    const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(`${from}|${to}`)}`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const d = await res.json();
+    const main = String((d.responseData && d.responseData.translatedText) || '').trim();
+    if (+d.responseStatus !== 200 || !main || /MYMEMORY WARNING/i.test(main)) throw new Error(d.responseDetails || 'no translation');
+    // Only close matches: the service's memory also returns loosely related sentences.
+    const alts = (d.matches || []).filter((m) => +m.match >= 0.75).map((m) => String(m.translation || '').trim())
+      .filter((a) => a && a.length <= main.length * 2 + 2);
+    return { main, alts };
+  }
+  // Tidies a Chinese translation: no spaces between characters, and no full stop on a single word.
+  function cleanZh(s, english) {
+    let t = s.replace(/\s+/g, ' ').replace(/([㐀-鿿〇，。？！])\s+(?=[㐀-鿿〇，。？！])/g, '$1').trim();
+    if (!/[.!?。！？]$/.test(english.trim()) && english.trim().split(/\s+/).length <= 3) t = t.replace(/[。．.！!]+$/, '');
+    return t;
+  }
+
+  async function mineTranslate(input, replaceId) {
+    input = input.trim();
+    if (!input) return;
+    const fromZh = [...input].some(isHan);
+    MINE_UI.draft = { input, busy: true, replaceId };
+    renderMine();
+    let draft;
+    try {
+      if (fromZh) {
+        const h = cleanZh(input, input);
+        const [t, p] = await Promise.all([translate(input, 'zh-CN', 'en'), makePinyin(h)]);
+        draft = { e: /^[A-Z][a-z]+$/.test(t.main) ? t.main.toLowerCase() : t.main, h, p, alts: [] };
+      } else {
+        const t = await translate(input, 'en', 'zh-CN');
+        const h = cleanZh(t.main, input);
+        const alts = [...new Set(t.alts.map((a) => cleanZh(a, input)))].filter((a) => a !== h && hanCount(a) && !/[a-z]/i.test(a)).slice(0, 3);
+        draft = { e: input, h, p: hanCount(h) ? await makePinyin(h) : '', alts };
+      }
+    } catch (err) {
+      draft = { e: fromZh ? '' : input, h: fromZh ? input : '', p: fromZh ? await makePinyin(input).catch(() => '') : '', alts: [], error: navigator.onLine === false ? 'offline' : 'failed' };
+    }
+    MINE_UI.draft = { input, replaceId, ...draft };
+    if (location.hash === '#/s/mine') renderMine();
+  }
+
+  function draftCard() {
+    const d = MINE_UI.draft;
+    if (!d) return '';
+    if (d.busy) return `<div class="card draft"><p class="muted">Translating “${esc(d.input)}”…</p></div>`;
+    const err = d.error ? `<p class="banner">${d.error === 'offline' ? 'No internet connection, so it couldn’t be translated.' : 'The translation service didn’t answer.'} Type the Chinese yourself, or save it as it is: it then waits under “Waiting for translation” for later or for Claude.</p>` : '';
+    return `<div class="card draft">
+      ${d.h && aligned(d.h, d.p) ? `<div class="d-top"><div class="d-hz">${hz(d.h, d.p)}</div><div class="d-py">${py(d.p)}</div><div class="d-say">${sayBtn(d.h, '🔊 Play')}</div></div>` : ''}
+      ${err}
+      ${d.alts && d.alts.length ? `<div class="alts"><small>Other translations — tap to use:</small>${d.alts.map((a, i) => `<button class="chip" data-act="mine-alt" data-i="${i}" lang="zh-Hans">${esc(a)}</button>`).join('')}</div>` : ''}
+      <label class="field"><span>English</span><input id="d-e" value="${esc(d.e)}" autocomplete="off"></label>
+      <label class="field"><span>汉字</span><input id="d-h" value="${esc(d.h)}" lang="zh-Hans" autocomplete="off" autocorrect="off" autocapitalize="off"></label>
+      <label class="field"><span>Pinyin</span><input id="d-p" value="${esc(d.p)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="made automatically · or type ni3 hao3"></label>
+      <p class="hint" id="d-msg">Check it looks right, fix anything, then save. Pinyin updates when you change the 汉字.</p>
+      <div class="row2"><button class="btn" data-act="mine-cancel">Cancel</button><button class="btn primary" data-act="mine-save">Save</button></div>
+    </div>`;
+  }
+
+  function renderMine() {
+    const recs = mineRecs(), todo = recs.filter((r) => !r.h || !aligned(r.h, r.p || ''));
+    const rough = recs.filter((r) => r.st !== 'pol').length;
+    const busy = MINE_UI.draft && MINE_UI.draft.busy;
+    render(`${header('My words', '#/')}
+      <div class="sec-head"><span class="big-ico">${MINE.icon}</span><div>${hz(MINE.zh, MINE.py, 'sec-zh')}<div>${py(MINE.py)}</div></div></div>
+      <form class="card add-card" data-form="mine-add">
+        <label for="mine-in"><b>Add a word or sentence</b></label>
+        <textarea id="mine-in" rows="2" placeholder="e.g. umbrella · Where is the train station?" autocomplete="off">${MINE_UI.draft && !MINE_UI.draft.replaceId ? esc(MINE_UI.draft.input) : ''}</textarea>
+        <button class="btn primary wide" type="submit" ${busy ? 'disabled' : ''}>${busy ? 'Translating…' : 'Translate'}</button>
+        <p class="hint">Type English (or Chinese). Translation comes from MyMemory, a free online service, so what you type here is sent to it. Pinyin is made on your phone.</p>
+      </form>
+      ${draftCard()}
+      ${recs.length ? `<div class="card">
+        <h3>✨ Polish with Claude</h3>
+        <p class="muted">${rough ? `${plural(rough, 'entry', 'entries')} ${rough === 1 ? 'is a machine translation' : 'are machine translations'}.` : 'Everything is polished.'} Copy them, paste them to Claude, then paste Claude’s reply back here. Claude checks the Chinese and tones and adds memory hooks and example sentences.</p>
+        <div class="row2"><button class="btn" data-act="mine-export" ${rough ? '' : 'disabled'}>📋 Copy for Claude</button><button class="btn" data-act="mine-import-open">📥 Paste reply</button></div>
+        ${MINE_UI.importOpen ? `<textarea id="mine-import" rows="4" placeholder="Paste Claude’s reply (the XZW-MINE block) here" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
+          <button class="btn primary wide" data-act="mine-import">Add Claude’s version</button>` : ''}
+      </div>` : ''}
+      ${MINE.chapters.length ? `<h2 class="h2">Your library</h2>${chapterRows(MINE)}` : `<p class="muted center">Your library is empty. Add your first word above — every 10 entries make a chapter with flashcards, review and passes.</p>`}
+      ${todo.length ? `<h2 class="h2">Waiting for translation</h2><div class="words">${todo.map((r) => `<div class="word todo"><span class="w-img">⏳</span><span class="w-en">${esc(r.e)}</span>
+        <button class="btn small" data-act="mine-retry" data-id="${esc(r.id)}">Translate</button><button class="icon-btn" data-act="mine-delete" data-id="${esc(r.id)}" aria-label="Delete">🗑</button></div>`).join('')}</div>` : ''}`);
+  }
+
+  function readFields(prefix) {
+    const val = (k) => ((document.getElementById(`${prefix}-${k}`) || {}).value || '').trim();
+    const h = val('h'), p = numberedToMarked(val('p')), e = val('e');
+    if (!e) return { error: 'Add the English meaning.' };
+    if (h && !hanCount(h)) return { error: 'The 汉字 field has no Chinese characters.' };
+    if (h && !aligned(h, p)) return { error: `The pinyin needs one syllable per character: ${hanCount(h)} characters but ${sylCount(p)} syllables.` };
+    return { e, h, p };
+  }
+  function mineSave() {
+    const f = readFields('d');
+    if (f.error) { document.getElementById('d-msg').textContent = `⚠️ ${f.error}`; return; }
+    const d = MINE_UI.draft;
+    const rec = d.replaceId && mineRecs().find((r) => r.id === d.replaceId);
+    const fields = { e: f.e, h: f.h, p: f.h ? f.p : '', st: f.h ? 'mt' : 'todo' };
+    if (rec) Object.assign(rec, fields);
+    else mineRecs().push({ id: newId(), t: Date.now(), ...fields });
+    MINE_UI.draft = null;
+    buildMine(); save(); renderMine();
+    toast(f.h ? '✓ Added to My words' : '✓ Saved — waiting for translation');
+  }
+  function mineDelete(id) {
+    const rec = mineRecs().find((r) => r.id === id);
+    if (!rec || !confirm(`Delete “${rec.e}” from My words?`)) return;
+    S.custom.items = mineRecs().filter((r) => r !== rec);
+    delete S.srs[`mine:${id}`];
+    buildMine(); save(); closeSheet(); route();
+  }
+  function openEditSheet(id) {
+    const r = mineRecs().find((x) => x.id === id);
+    if (!r) return;
+    const sheet = document.getElementById('sheet');
+    sheet.innerHTML = `<div class="sheet-wrap" data-act="close-sheet"><div class="sheet" data-act="noop" role="dialog" aria-modal="true">
+      <div class="grab"></div><h3>Edit entry</h3>
+      <label class="field"><span>English</span><input id="ed-e" value="${esc(r.e)}" autocomplete="off"></label>
+      <label class="field"><span>汉字</span><input id="ed-h" value="${esc(r.h)}" lang="zh-Hans" autocomplete="off" autocorrect="off" autocapitalize="off"></label>
+      <label class="field"><span>Pinyin</span><input id="ed-p" value="${esc(r.p)}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></label>
+      <p class="hint" id="ed-msg">Pinyin updates when you change the 汉字. Tone numbers (ni3 hao3) are fine.</p>
+      <div class="row2"><button class="btn" data-act="close-sheet">Cancel</button><button class="btn primary" data-act="mine-edit-save" data-id="${esc(r.id)}">Save</button></div>
+    </div></div>`;
+    sheet.classList.add('open');
+    document.body.classList.add('sheet-open');
+  }
+  function mineEditSave(id) {
+    const r = mineRecs().find((x) => x.id === id);
+    const f = readFields('ed');
+    if (!r) return;
+    if (f.error) { document.getElementById('ed-msg').textContent = `⚠️ ${f.error}`; return; }
+    const changed = f.h !== r.h || f.p !== r.p;
+    Object.assign(r, { e: f.e, h: f.h, p: f.h ? f.p : '' }, changed ? { st: f.h ? 'mt' : 'todo' } : {});
+    buildMine(); save(); closeSheet(); route();
+    toast('✓ Saved');
+  }
+
+  // Exchange with Claude: copy entries out, paste Claude's XZW-MINE block back in.
+  function mineExport() {
+    const rough = mineRecs().filter((r) => r.st !== 'pol').map((r) => ({ id: r.id, e: r.e, h: r.h || '', p: r.p || '' }));
+    const text = `Please polish these entries from my 学中文 app ("My words") and reply with an XZW-MINE block.\nXZW-MINE-REQUEST\n${JSON.stringify(rough)}`;
+    const done = () => toast(`✓ Copied ${plural(rough.length, 'entry', 'entries')} — paste it to Claude`);
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, () => showCopyBox(text));
+    else showCopyBox(text);
+  }
+  function showCopyBox(text) {
+    const sheet = document.getElementById('sheet');
+    sheet.innerHTML = `<div class="sheet-wrap" data-act="close-sheet"><div class="sheet" data-act="noop"><div class="grab"></div><h3>Copy this for Claude</h3>
+      <textarea class="copybox" rows="8" readonly>${esc(text)}</textarea><button class="btn wide" data-act="close-sheet">Done</button></div></div>`;
+    sheet.classList.add('open');
+    const box = sheet.querySelector('textarea'); box.focus(); box.select();
+  }
+  function mineImport() {
+    const text = ((document.getElementById('mine-import') || {}).value || '').trim();
+    let list;
+    try { list = JSON.parse(text.slice(text.indexOf('['), text.lastIndexOf(']') + 1)); } catch (e) { list = null; }
+    if (!Array.isArray(list)) return toast('That doesn’t look like Claude’s XZW-MINE block');
+    let updated = 0, added = 0;
+    const skipped = [];
+    for (const x of list) {
+      const ok = x && typeof x.e === 'string' && typeof x.h === 'string' && typeof x.p === 'string' && aligned(x.h, x.p)
+        && (!x.x || (Array.isArray(x.x) && x.x.length === 3 && x.x.every((v) => typeof v === 'string') && aligned(x.x[0], x.x[1])));
+      if (!ok) { skipped.push((x && x.e) || '?'); continue; }
+      const fields = { e: x.e, h: x.h, p: x.p, img: typeof x.img === 'string' && x.img.length <= 8 ? x.img : '', m: typeof x.m === 'string' ? x.m : '', x: x.x || null, n: typeof x.n === 'string' ? x.n : '', st: 'pol' };
+      const rec = x.id && mineRecs().find((r) => r.id === x.id);
+      if (rec) { Object.assign(rec, fields); updated++; } else { mineRecs().push({ id: newId(), t: Date.now(), ...fields }); added++; }
+    }
+    MINE_UI.importOpen = false;
+    buildMine(); save(); renderMine();
+    toast(`✓ ${updated} updated${added ? `, ${added} added` : ''}${skipped.length ? ` · skipped ${skipped.length} that didn’t check out` : ''}`);
+  }
+
   // ---------- events ----------
   const ACTIONS = {
     say: (el) => Speech.say(el.dataset.t, !!el.dataset.slow, el.dataset.p),
@@ -1113,6 +1365,21 @@
     'drill-show': () => { DRILL.state = 'shown'; renderDrill(); Speech.say(numZh(DRILL.n)); },
     'drill-grade': (el) => drillResult(el.dataset.ok === '1'),
     'drill-next': drillNext,
+    'mine-save': mineSave,
+    'mine-cancel': () => { MINE_UI.draft = null; renderMine(); },
+    'mine-alt': (el) => {
+      const d = MINE_UI.draft, i = +el.dataset.i;
+      d.e = ((document.getElementById('d-e') || {}).value || d.e).trim();
+      [d.h, d.alts[i]] = [d.alts[i], d.h];
+      makePinyin(d.h).then((py) => { d.p = py; renderMine(); }, () => renderMine());
+    },
+    'mine-retry': (el) => { const r = mineRecs().find((x) => x.id === el.dataset.id); if (r) { window.scrollTo(0, 0); mineTranslate(r.e, r.id); } },
+    'mine-delete': (el) => mineDelete(el.dataset.id),
+    'mine-edit': (el) => openEditSheet(el.dataset.id),
+    'mine-edit-save': (el) => mineEditSave(el.dataset.id),
+    'mine-export': mineExport,
+    'mine-import-open': () => { MINE_UI.importOpen = !MINE_UI.importOpen; renderMine(); const t = document.getElementById('mine-import'); if (t) t.focus(); },
+    'mine-import': mineImport,
   };
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-act]');
@@ -1126,6 +1393,7 @@
     e.preventDefault();
     if (e.target.dataset.form === 'write') checkWrite(false);
     if (e.target.dataset.form === 'drill') ACTIONS['drill-check']();
+    if (e.target.dataset.form === 'mine-add') mineTranslate((document.getElementById('mine-in') || {}).value || '');
   });
   document.addEventListener('change', (e) => {
     const el = e.target, key = el.dataset.set;
@@ -1136,6 +1404,12 @@
   });
   document.addEventListener('input', (e) => {
     if (e.target.dataset.set === 'rate') document.getElementById('rate-val').textContent = `${(+e.target.value).toFixed(2)}×`;
+    // My words: remake the pinyin shortly after the 汉字 field changes.
+    if (e.target.id === 'd-h' || e.target.id === 'ed-h') {
+      const field = e.target, out = document.getElementById(field.id.replace(/h$/, 'p'));
+      clearTimeout(field.pyTimer);
+      field.pyTimer = setTimeout(() => { if (hanCount(field.value)) makePinyin(field.value).then((py) => { out.value = py; }, () => {}); }, 400);
+    }
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
   ['touchend', 'click'].forEach((ev) => document.addEventListener(ev, Speech.unlock, { once: true, capture: true }));
@@ -1143,6 +1417,7 @@
 
   // ---------- start ----------
   Speech.init();
+  buildMine();
   applySettings();
   if (!SECTIONS.length) appEl.innerHTML = '<p style="padding:24px">Content failed to load. Please reload.</p>';
   else route();
@@ -1169,5 +1444,5 @@
   };
 
   // Exposed for debugging and tests only.
-  window.XZW = { numZh, numPy, gradePinyin, gradeWrite, slowChunks, align, state: () => S, run: () => RUN, ITEMS, PICTO, pictoHTML };
+  window.XZW = { numZh, numPy, gradePinyin, gradeWrite, slowChunks, numberedToMarked, cleanZh, buildMine, align, state: () => S, run: () => RUN, ITEMS, PICTO, pictoHTML };
 })();
